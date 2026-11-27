@@ -59,8 +59,6 @@ class EventPassApp extends StatelessWidget {
   }
 }
 
-/// Clears the shopping cart automatically whenever the user logs out or
-/// their JWT session expires (401).
 class _SessionCartSynchronizer extends StatefulWidget {
   final Widget child;
   const _SessionCartSynchronizer({required this.child});

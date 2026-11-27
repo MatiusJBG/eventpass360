@@ -17,8 +17,6 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Maps HTTP status codes to friendly, actionable Spanish messages when the
-/// backend omits a specific message or returns a generic status label.
 String mapHttpErrorMessage(int statusCode, [String? serverMessage]) {
   final cleaned = serverMessage?.trim() ?? '';
   final isGeneric = cleaned.isEmpty ||
@@ -110,7 +108,6 @@ class ApiClient {
         () => _http.delete(Uri.parse(url), headers: _headers()),
       );
 
-  /// Authenticated GET returning UTF-8 text (e.g. XML invoices).
   Future<String> getText(String url) async {
     final response = await _send(
       () => _http.get(Uri.parse(url), headers: _headers(jsonContent: false)),
@@ -119,7 +116,6 @@ class ApiClient {
     return utf8.decode(response.bodyBytes);
   }
 
-  /// Authenticated GET returning raw bytes (e.g. PDF invoices).
   Future<Uint8List> getBytes(String url) async {
     final response = await _send(
       () => _http.get(Uri.parse(url), headers: _headers(jsonContent: false)),
@@ -164,7 +160,6 @@ class ApiClient {
         serverMsg = decoded['message'].toString();
       }
     } catch (_) {
-      // Non-JSON error body; fall back to status mapping.
     }
     throw ApiException(
       response.statusCode,
