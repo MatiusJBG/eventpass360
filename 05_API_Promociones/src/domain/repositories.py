@@ -1,0 +1,23 @@
+"""Puertos abstractos."""
+from abc import ABC, abstractmethod
+from decimal import Decimal
+from typing import Optional
+
+from src.domain.entities import Promocion
+
+
+class PromocionRepository(ABC):
+    @abstractmethod
+    def list_all(self, solo_activas: bool = False) -> list[Promocion]: ...
+    @abstractmethod
+    def find_by_id(self, promocion_id: int) -> Optional[Promocion]: ...
+    @abstractmethod
+    def find_aplicable(self, cantidad_total: int) -> Optional[Promocion]: ...
+    @abstractmethod
+    def find_overlaps(self, cantidad_min: int, cantidad_max: Optional[int], exclude_id: Optional[int] = None) -> list[Promocion]: ...
+    @abstractmethod
+    def create(self, cantidad_min: int, cantidad_max: Optional[int], porcentaje: Decimal) -> Promocion: ...
+    @abstractmethod
+    def update(self, promocion_id: int, **fields) -> Promocion: ...
+    @abstractmethod
+    def delete(self, promocion_id: int) -> None: ...

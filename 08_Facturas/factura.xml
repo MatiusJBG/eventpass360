@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Factura>
+  <Cabecera>
+    <Numero>FAC-000001</Numero>
+    <Fecha>2026-11-27T05:36:48.827176+00:00</Fecha>
+    <Estado>EMITIDA</Estado>
+  </Cabecera>
+  <Cliente>
+    <Id>2</Id>
+    <Nombre>Cliente de prueba</Nombre>
+    <Correo>cliente@eventpass360.com</Correo>
+  </Cliente>
+  <Detalle>
+    <Item>
+      <Descripcion>Rock Fest - General</Descripcion>
+      <Cantidad>3</Cantidad>
+      <PrecioUnitario>25.00</PrecioUnitario>
+      <Subtotal>75.00</Subtotal>
+    </Item>
+  </Detalle>
+  <Totales>
+    <Subtotal>75.00</Subtotal>
+    <Descuento>3.75</Descuento>
+    <BaseImponible>71.25</BaseImponible>
+    <IVA>10.69</IVA>
+    <Total>81.94</Total>
+  </Totales>
+</Factura>

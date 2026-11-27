@@ -1,0 +1,70 @@
+# ============================================================
+# EventPass 360 — .gitignore
+# ============================================================
+
+# Variables de entorno y secretos (NUNCA subir credenciales reales)
+.env
+.env.*
+*.env
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+key.properties
+*credentials*.json
+*secrets*.json
+
+# Python / Flask (APIs 01 - 06)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+
+# Flutter / Dart (07_Aplicativo_Flutter)
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+**/build/
+**/coverage/
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Editores / IDEs
+.vscode/
+*.swp
+*.swo
+*~
+
+# Sistema operativo y temporales
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.bak
+*.zip
