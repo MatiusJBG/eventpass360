@@ -1,6 +1,7 @@
 """Entidad pura de Factura."""
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,7 @@ class Factura:
     estado: str
     xml: str = ""
     pdf_base64: str = ""
+    usuario_id: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {

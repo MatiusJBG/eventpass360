@@ -1,41 +1,37 @@
 import 'package:flutter/foundation.dart';
 
+import '../domain/entities.dart';
+
 class Session extends ChangeNotifier {
-  String? token;
-  Map<String, dynamic>? user;
+  String? _token;
+  Usuario? _usuario;
 
-  bool get isAuthenticated => token != null && token!.isNotEmpty;
-  bool get isAdmin => user != null && user!['rol'] == 'ADMIN';
+  String? get token => _token;
+  Usuario? get usuario => _usuario;
 
-  int get userId {
-    final u = user;
-    if (u == null) return 0;
-    final id = u['id'];
-    if (id is int) return id;
-    return int.tryParse(id.toString()) ?? 0;
+  bool get isAuthenticated => _token != null && _token!.isNotEmpty;
+  bool get isAdmin => _usuario?.rol.toUpperCase() == 'ADMIN';
+
+  int get userId => _usuario?.id ?? 0;
+  String get nombre => _usuario?.nombre ?? '';
+  String get correo => _usuario?.correo ?? '';
+  String get rol => _usuario?.rol ?? '';
+
+  void setAuth(String token, Usuario usuario) {
+    _token = token;
+    _usuario = usuario;
+    notifyListeners();
   }
 
-  String get nombre {
-    final u = user;
-    if (u == null) return '';
-    return u['nombre']?.toString() ?? '';
-  }
-
-  String get correo {
-    final u = user;
-    if (u == null) return '';
-    return u['correo']?.toString() ?? '';
-  }
-
-  void setAuth(String t, Map<String, dynamic> u) {
-    token = t;
-    user = u;
+  void updateUser(Usuario usuario) {
+    _usuario = usuario;
     notifyListeners();
   }
 
   void clear() {
-    token = null;
-    user = null;
+    if (_token == null && _usuario == null) return;
+    _token = null;
+    _usuario = null;
     notifyListeners();
   }
 }

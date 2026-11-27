@@ -11,18 +11,28 @@ from src.application.use_cases.tipo_entrada_use_cases import (
     ActualizarTipoEntradaUseCase, CrearTipoEntradaUseCase, EliminarTipoEntradaUseCase, ListarTiposEntradaUseCase,
 )
 from src.config.settings import Settings
+from src.domain.repositories import (
+    CategoriaRepository, EventoRepository, StockRepository, TipoEntradaRepository,
+)
 from src.infrastructure.db.postgres_repository import (
     PostgresCategoriaRepository, PostgresEventoRepository, PostgresStockRepository, PostgresTipoEntradaRepository,
 )
 
 
 class Container:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        categoria_repo: CategoriaRepository,
+        evento_repo: EventoRepository,
+        tipo_entrada_repo: TipoEntradaRepository,
+        stock_repo: StockRepository,
+    ):
         self.settings = settings
-        self.categoria_repo = PostgresCategoriaRepository(settings.database_url)
-        self.evento_repo = PostgresEventoRepository(settings.database_url)
-        self.tipo_entrada_repo = PostgresTipoEntradaRepository(settings.database_url)
-        self.stock_repo = PostgresStockRepository(settings.database_url)
+        self.categoria_repo = categoria_repo
+        self.evento_repo = evento_repo
+        self.tipo_entrada_repo = tipo_entrada_repo
+        self.stock_repo = stock_repo
 
         self.listar_categorias = ListarCategoriasUseCase(self.categoria_repo)
         self.crear_categoria = CrearCategoriaUseCase(self.categoria_repo)
@@ -47,4 +57,10 @@ class Container:
 
 
 def build_container(settings: Settings) -> Container:
-    return Container(settings)
+    return Container(
+        settings=settings,
+        categoria_repo=PostgresCategoriaRepository(settings.database_url),
+        evento_repo=PostgresEventoRepository(settings.database_url),
+        tipo_entrada_repo=PostgresTipoEntradaRepository(settings.database_url),
+        stock_repo=PostgresStockRepository(settings.database_url),
+    )

@@ -2,29 +2,58 @@
 import logging
 
 from src.application.use_cases.previsualizar_use_cases import normalize_items
-from src.domain.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
-from src.domain.repositories import CompraRepository
+from src.domain.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceUnavailableError,
+    ValidationError,
+)
+from src.domain.repositories import (
+    CompraRepository,
+    EventosGateway,
+    FacturacionGateway,
+    PromocionesGateway,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class CrearCompraUseCase:
-    def __init__(self, repo: CompraRepository, eventos_gw, promociones_gw, facturacion_gw):
+    def __init__(
+        self,
+        repo: CompraRepository,
+        eventos_gw: EventosGateway,
+        promociones_gw: PromocionesGateway,
+        facturacion_gw: FacturacionGateway,
+    ):
         self.repo = repo
         self.eventos_gw = eventos_gw
         self.promociones_gw = promociones_gw
         self.facturacion_gw = facturacion_gw
 
-    def execute(self, usuario: dict, solicitud_id: str, items):
+    def _build_replay_response(self, existing, usuario: dict, auth_header: str) -> dict:
+        if existing.usuario_id != usuario["sub"]:
+            raise ForbiddenError("La solicitud pertenece a otro usuario")
+        factura = None
+        try:
+            factura = self.facturacion_gw.buscar_por_compra(existing.id, auth_header=auth_header)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("No se pudo recuperar factura para compra idempotente %s: %s", existing.id, exc)
+        resultado = existing.to_dict()
+        resultado["factura"] = factura
+        return resultado
+
+    def execute(self, usuario: dict, solicitud_id: str, items, auth_header: str = ""):
         normalized = normalize_items(items)
-        if not solicitud_id:
-            from src.domain.exceptions import ValidationError
+        if not isinstance(solicitud_id, str) or not solicitud_id.strip():
             raise ValidationError("solicitud_id es obligatorio")
+        solicitud_id = solicitud_id.strip()
 
         # 1. Idempotencia: mismo solicitud_id -> misma compra, sin repetir efectos.
         existing = self.repo.find_by_solicitud_id(solicitud_id)
         if existing is not None:
-            return existing.to_dict(), False
+            return self._build_replay_response(existing, usuario, auth_header), False
 
         # 2. Cotizar precios reales en API Eventos (jamás confiar en precios del cliente).
         cotizacion = self.eventos_gw.cotizar(normalized)
@@ -38,20 +67,31 @@ class CrearCompraUseCase:
         calculo = self.promociones_gw.calcular(subtotal, cantidad_total)
 
         # 4. Descuento atómico de stock en API Eventos (409 si no alcanza).
-        self.eventos_gw.descontar(normalized)
+        self.eventos_gw.descontar(normalized, auth_header=auth_header)
 
-        # 5. Persistir compra (PENDIENTE) + detalle.
+        # 5. Persistir compra (PENDIENTE) + detalle. Si falla, compensar stock inmediatamente.
         detalles_db = [
             {"tipo_entrada_id": it["tipo_entrada_id"], "cantidad": it["cantidad_solicitada"],
              "precio_unitario": it["precio_unitario"], "subtotal": it["subtotal"]}
             for it in cot_items
         ]
-        compra = self.repo.create(
-            usuario_id=usuario["sub"], solicitud_id=solicitud_id,
-            subtotal=calculo["subtotal"], descuento=calculo["descuento"],
-            base_imponible=calculo["base_imponible"], iva=calculo["iva"],
-            total=calculo["total"], estado="PENDIENTE", detalles=detalles_db,
-        )
+        try:
+            compra = self.repo.create(
+                usuario_id=usuario["sub"], solicitud_id=solicitud_id,
+                subtotal=calculo["subtotal"], descuento=calculo["descuento"],
+                base_imponible=calculo["base_imponible"], iva=calculo["iva"],
+                total=calculo["total"], estado="PENDIENTE", detalles=detalles_db,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Fallo al persistir compra (%s); restaurando stock: %s", solicitud_id, exc)
+            try:
+                self.eventos_gw.restaurar(normalized, auth_header=auth_header)
+            except Exception as restore_exc:  # noqa: BLE001
+                logger.error("No se pudo restaurar stock tras fallo en paso 5 (%s): %s", solicitud_id, restore_exc)
+            existing = self.repo.find_by_solicitud_id(solicitud_id)
+            if existing is not None:
+                return self._build_replay_response(existing, usuario, auth_header), False
+            raise
 
         # 6. Emitir factura en API Facturación.
         factura_items = [
@@ -63,12 +103,14 @@ class CrearCompraUseCase:
         totales = {k: calculo[k] for k in ("subtotal", "descuento", "base_imponible", "iva", "total")}
 
         try:
-            factura = self.facturacion_gw.emitir(compra.id, cliente, factura_items, totales)
+            factura = self.facturacion_gw.emitir(
+                compra.id, cliente, factura_items, totales, auth_header=auth_header
+            )
         except Exception as exc:  # noqa: BLE001
             # 7. COMPENSACIÓN SAGA: restaurar stock y marcar FALLIDA (nunca confirmada incompleta).
             logger.warning("Facturación falló; compensando compra %s: %s", compra.id, exc)
             try:
-                self.eventos_gw.restaurar(normalized)
+                self.eventos_gw.restaurar(normalized, auth_header=auth_header)
             except Exception as restore_exc:  # noqa: BLE001
                 logger.error("No se pudo restaurar stock de compra %s: %s", compra.id, restore_exc)
             self.repo.update_estado(compra.id, "FALLIDA")
@@ -109,25 +151,47 @@ class EstadisticasComprasUseCase:
 
 
 class AnularCompraUseCase:
-    def __init__(self, repo: CompraRepository, eventos_gw, facturacion_gw):
+    def __init__(
+        self,
+        repo: CompraRepository,
+        eventos_gw: EventosGateway,
+        facturacion_gw: FacturacionGateway,
+    ):
         self.repo = repo
         self.eventos_gw = eventos_gw
         self.facturacion_gw = facturacion_gw
 
-    def execute(self, compra_id: int):
+    def execute(self, compra_id: int, auth_header: str = ""):
         compra = self.repo.find_by_id(compra_id)
         if compra is None:
             raise NotFoundError("Compra no existe")
         if compra.estado == "ANULADA":
-            return compra
-        # Restaurar stock (compensación) y anular factura.
+            raise ConflictError("La compra ya se encuentra anulada")
+        if compra.estado != "CONFIRMADA":
+            raise ConflictError("Solo se pueden anular compras confirmadas")
+
+        # Transición atómica CONFIRMADA -> ANULADA para evitar doble anulación concurrente.
+        if not self.repo.transition_estado(compra_id, from_estado="CONFIRMADA", to_estado="ANULADA"):
+            raise ConflictError("La compra ya se encuentra anulada o cambió de estado")
+
+        # Restaurar stock (compensación) y anular factura sin silenciar fallos.
         items = [{"tipo_entrada_id": d.tipo_entrada_id, "cantidad": d.cantidad} for d in compra.detalles]
         try:
-            self.eventos_gw.restaurar(items)
+            self.eventos_gw.restaurar(items, auth_header=auth_header)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("No se pudo restaurar stock en anulación: %s", exc)
+            logger.error("No se pudo restaurar stock en anulación de compra %s: %s", compra_id, exc)
+            self.repo.update_estado(compra_id, "CONFIRMADA")
+            raise ServiceUnavailableError("No se pudo restaurar el stock; la compra sigue confirmada") from exc
+
         try:
-            self.facturacion_gw.anular_por_compra(compra_id)
+            self.facturacion_gw.anular_por_compra(compra_id, auth_header=auth_header)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("No se pudo anular factura: %s", exc)
-        return self.repo.anular(compra_id)
+            logger.error("No se pudo anular factura en anulación de compra %s: %s", compra_id, exc)
+            try:
+                self.eventos_gw.descontar(items, auth_header=auth_header)
+                self.repo.update_estado(compra_id, "CONFIRMADA")
+            except Exception as comp_exc:  # noqa: BLE001
+                logger.error("Error compensando anulación fallida de compra %s: %s", compra_id, comp_exc)
+            raise ServiceUnavailableError("No se pudo anular la factura asociada") from exc
+
+        return self.repo.find_by_id(compra_id)

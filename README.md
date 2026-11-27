@@ -75,7 +75,7 @@ Para 02_API_Compras añadir además:
     URL_PROMOCIONES=http://localhost:5003
     URL_FACTURACION=http://localhost:5004
 
-IMPORTANTE: el JWT_SECRET_KEY debe ser el mismo en Usuarios, Eventos, Promociones y Compras.
+IMPORTANTE: el JWT_SECRET_KEY debe ser el mismo en las 5 APIs: Usuarios, Eventos, Promociones, Compras y Facturación.
 
 ---
 

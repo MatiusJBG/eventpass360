@@ -6,13 +6,27 @@ from src.domain.repositories import EventoRepository, TipoEntradaRepository
 
 
 def _parse_decimal(value, field="precio") -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise ValidationError(f"{field} inválido")
     try:
         d = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         raise ValidationError(f"{field} inválido")
-    if d < 0:
+    if not d.is_finite() or d < 0:
         raise ValidationError(f"{field} no puede ser negativo")
     return d
+
+
+def _validate_positive_int(value, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(f"{field} debe ser un entero positivo")
+    return value
+
+
+def _validate_non_negative_int(value, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValidationError(f"{field} debe ser un entero mayor o igual a 0")
+    return value
 
 
 class ListarTiposEntradaUseCase:
@@ -20,6 +34,8 @@ class ListarTiposEntradaUseCase:
         self.repo = repo
 
     def execute(self, evento_id=None):
+        if evento_id is not None:
+            evento_id = _validate_positive_int(evento_id, "evento_id")
         return self.repo.list(evento_id=evento_id)
 
 
@@ -29,16 +45,16 @@ class CrearTipoEntradaUseCase:
         self.evento_repo = evento_repo
 
     def execute(self, evento_id, tipo, precio, stock):
-        if not tipo:
+        evento_id_valid = _validate_positive_int(evento_id, "evento_id")
+        if not isinstance(tipo, str) or not tipo.strip():
             raise ValidationError("El tipo es obligatorio")
-        if self.evento_repo.find_by_id(evento_id) is None:
+        tipo_norm = tipo.strip()
+        if self.evento_repo.find_by_id(evento_id_valid) is None:
             raise NotFoundError("Evento no existe")
-        if self.repo.find_by_evento_tipo(evento_id, tipo) is not None:
+        if self.repo.find_by_evento_tipo(evento_id_valid, tipo_norm) is not None:
             raise ConflictError("Ya existe ese tipo de entrada para el evento")
-        stock = int(stock) if stock is not None else 0
-        if stock < 0:
-            raise ValidationError("El stock no puede ser negativo")
-        return self.repo.create(evento_id, tipo, _parse_decimal(precio), stock)
+        stock_valid = 0 if stock is None else _validate_non_negative_int(stock, "stock")
+        return self.repo.create(evento_id_valid, tipo_norm, _parse_decimal(precio), stock_valid)
 
 
 class ActualizarTipoEntradaUseCase:
@@ -47,19 +63,25 @@ class ActualizarTipoEntradaUseCase:
         self.evento_repo = evento_repo
 
     def execute(self, tipo_id, tipo=None, precio=None, stock=None, estado=None):
-        if self.repo.find_by_id(tipo_id) is None:
+        actual = self.repo.find_by_id(tipo_id)
+        if actual is None:
             raise NotFoundError("Tipo de entrada no existe")
         fields = {}
-        if tipo:
-            fields["tipo"] = tipo
+        if tipo is not None:
+            if not isinstance(tipo, str) or not tipo.strip():
+                raise ValidationError("El tipo no puede estar vacío")
+            nuevo_tipo = tipo.strip()
+            existing = self.repo.find_by_evento_tipo(actual.evento_id, nuevo_tipo)
+            if existing is not None and existing.id != tipo_id:
+                raise ConflictError("Ya existe ese tipo de entrada para el evento")
+            fields["tipo"] = nuevo_tipo
         if precio is not None:
             fields["precio"] = _parse_decimal(precio)
         if stock is not None:
-            stock = int(stock)
-            if stock < 0:
-                raise ValidationError("El stock no puede ser negativo")
-            fields["stock"] = stock
+            fields["stock"] = _validate_non_negative_int(stock, "stock")
         if estado is not None:
+            if not isinstance(estado, bool):
+                raise ValidationError("estado debe ser booleano")
             fields["estado"] = estado
         if not fields:
             raise ValidationError("Nada que actualizar")

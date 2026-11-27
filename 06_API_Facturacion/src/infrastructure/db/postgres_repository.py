@@ -1,5 +1,8 @@
 """Implementación concreta del repositorio de facturas."""
+import psycopg
+
 from src.domain.entities import Factura
+from src.domain.exceptions import ConflictError
 from src.domain.repositories import FacturaRepository
 from src.infrastructure.db.connection import get_connection
 
@@ -11,36 +14,49 @@ class PostgresFacturaRepository(FacturaRepository):
     @staticmethod
     def _row(row, include_content=True) -> Factura:
         return Factura(
-            id=row["id"], compra_id=row["compra_id"], numero=row["numero"], fecha=row["fecha"],
+            id=row["id"],
+            compra_id=row["compra_id"],
+            numero=row["numero"],
+            fecha=row["fecha"],
             estado=row["estado"],
             xml=row.get("xml", "") if include_content else "",
             pdf_base64=row.get("pdf_base64", "") if include_content else "",
+            usuario_id=row.get("usuario_id"),
         )
 
     def _select(self, where, params, include_content=True):
-        cols = "id, compra_id, numero, fecha, estado"
+        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, c.usuario_id"
         if include_content:
-            cols += ", xml, pdf_base64"
+            cols += ", f.xml, f.pdf_base64"
         with get_connection(self.database_url) as conn:
-            row = conn.execute(f"SELECT {cols} FROM facturas {where}", params).fetchone()
+            row = conn.execute(
+                f"SELECT {cols} FROM facturas f JOIN compras c ON c.id = f.compra_id {where}",
+                params,
+            ).fetchone()
         return self._row(row, include_content) if row else None
 
     def find_by_compra_id(self, compra_id):
-        return self._select("WHERE compra_id = %s", (compra_id,), include_content=False)
+        return self._select("WHERE f.compra_id = %s", (compra_id,), include_content=False)
 
     def find_by_id(self, factura_id):
-        return self._select("WHERE id = %s", (factura_id,), include_content=True)
+        return self._select("WHERE f.id = %s", (factura_id,), include_content=True)
 
-    def list_all(self, compra_id=None):
-        cols = "id, compra_id, numero, fecha, estado"
-        sql = f"SELECT {cols} FROM facturas"
-        params = ()
+    def list_all(self, compra_id=None, usuario_id=None):
+        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, c.usuario_id"
+        sql = f"SELECT {cols} FROM facturas f JOIN compras c ON c.id = f.compra_id"
+        clauses = []
+        params = []
         if compra_id is not None:
-            sql += " WHERE compra_id = %s"
-            params = (compra_id,)
-        sql += " ORDER BY id"
+            clauses.append("f.compra_id = %s")
+            params.append(compra_id)
+        if usuario_id is not None:
+            clauses.append("c.usuario_id = %s")
+            params.append(usuario_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY f.id"
         with get_connection(self.database_url) as conn:
-            rows = conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, tuple(params)).fetchall()
         return [self._row(r, include_content=False) for r in rows]
 
     def next_numero(self):
@@ -49,11 +65,17 @@ class PostgresFacturaRepository(FacturaRepository):
         return f"FAC-{row['n']:06d}"
 
     def create(self, compra_id, numero, fecha, xml, pdf_base64):
-        with get_connection(self.database_url) as conn:
-            row = conn.execute(
-                "INSERT INTO facturas (compra_id, numero, fecha, xml, pdf_base64) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (compra_id, numero, fecha, xml, pdf_base64),
-            ).fetchone()
+        try:
+            with get_connection(self.database_url) as conn:
+                row = conn.execute(
+                    "INSERT INTO facturas (compra_id, numero, fecha, xml, pdf_base64) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (compra_id, numero, fecha, xml, pdf_base64),
+                ).fetchone()
+        except psycopg.errors.UniqueViolation as exc:
+            existing = self.find_by_compra_id(compra_id)
+            if existing is not None:
+                return existing
+            raise ConflictError("Ya existe una factura para esta compra") from exc
         return self.find_by_id(row["id"])
 
     def anular(self, factura_id):

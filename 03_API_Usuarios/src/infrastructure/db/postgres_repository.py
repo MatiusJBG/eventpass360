@@ -77,7 +77,13 @@ class PostgresUsuarioRepository(UsuarioRepository):
         return self.find_by_id(row["id"])
 
     def update_usuario(self, usuario_id, **fields):
-        allowed = {"nombre": "nombre", "correo": "correo", "rol_id": "rol_id", "password_hash": "password_hash"}
+        allowed = {
+            "nombre": "nombre",
+            "correo": "correo",
+            "rol_id": "rol_id",
+            "password_hash": "password_hash",
+            "estado": "estado",
+        }
         sets, params = [], []
         for key, column in allowed.items():
             if key in fields and fields[key] is not None:

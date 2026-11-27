@@ -5,6 +5,14 @@ from typing import Optional
 from src.domain.entities import Rol, Usuario
 
 
+class PasswordHasher(ABC):
+    @abstractmethod
+    def hash(self, password: str) -> str: ...
+
+    @abstractmethod
+    def verify(self, password: str, password_hash: str) -> bool: ...
+
+
 class UsuarioRepository(ABC):
     @abstractmethod
     def find_by_id(self, usuario_id: int) -> Optional[Usuario]: ...

@@ -112,6 +112,14 @@ class PostgresCompraRepository(CompraRepository):
         with get_connection(self.database_url) as conn:
             conn.execute("UPDATE compras SET estado = %s WHERE id = %s", (estado, compra_id))
 
+    def transition_estado(self, compra_id: int, from_estado: str, to_estado: str) -> bool:
+        with get_connection(self.database_url) as conn:
+            row = conn.execute(
+                "UPDATE compras SET estado = %s WHERE id = %s AND estado = %s RETURNING id",
+                (to_estado, compra_id, from_estado),
+            ).fetchone()
+        return row is not None
+
     def estadisticas(self):
         with get_connection(self.database_url) as conn:
             total = conn.execute("SELECT count(*) AS n FROM compras").fetchone()["n"]

@@ -2,6 +2,17 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from src.presentation.middlewares.auth_guard import require_role
+from src.presentation.schemas.validators import (
+    get_json_body,
+    optional_bool,
+    optional_non_empty_str,
+    optional_password,
+    optional_positive_int,
+    require_email,
+    require_fields,
+    require_non_empty_str,
+    require_positive_int,
+)
 
 usuario_bp = Blueprint("usuarios", __name__)
 
@@ -20,12 +31,17 @@ def list_usuarios():
 @usuario_bp.post("/usuarios")
 @require_role("ADMIN")
 def create_usuario():
-    data = request.get_json(silent=True) or {}
+    data = get_json_body(request)
+    require_fields(data, ["rol_id", "nombre", "correo", "password"])
+    rol_id = require_positive_int(data.get("rol_id"), "rol_id")
+    nombre = require_non_empty_str(data.get("nombre"), "nombre")
+    correo = require_email(data.get("correo"))
+    password = require_non_empty_str(data.get("password"), "password")
     usuario = _container().crear_usuario_use_case.execute(
-        rol_id=data.get("rol_id"),
-        nombre=data.get("nombre", ""),
-        correo=data.get("correo", ""),
-        password=data.get("password", ""),
+        rol_id=rol_id,
+        nombre=nombre,
+        correo=correo,
+        password=password,
     )
     return jsonify(usuario.to_dict()), 201
 
@@ -33,13 +49,19 @@ def create_usuario():
 @usuario_bp.put("/usuarios/<int:usuario_id>")
 @require_role("ADMIN")
 def update_usuario(usuario_id):
-    data = request.get_json(silent=True) or {}
+    data = get_json_body(request)
+    nombre = optional_non_empty_str(data.get("nombre"), "nombre")
+    correo = require_email(data["correo"]) if data.get("correo") is not None else None
+    rol_id = optional_positive_int(data.get("rol_id"), "rol_id")
+    password = optional_password(data.get("password"))
+    estado = optional_bool(data.get("estado"), "estado")
     usuario = _container().actualizar_usuario_use_case.execute(
         usuario_id,
-        nombre=data.get("nombre"),
-        correo=data.get("correo"),
-        rol_id=data.get("rol_id"),
-        password=data.get("password"),
+        nombre=nombre,
+        correo=correo,
+        rol_id=rol_id,
+        password=password,
+        estado=estado,
     )
     return jsonify(usuario.to_dict()), 200
 

@@ -3,22 +3,21 @@ from src.domain.exceptions import ValidationError
 from src.domain.repositories import StockRepository
 
 
-def _normalize_items(items):
+def _normalize_items(items) -> list[dict]:
     if not isinstance(items, list) or not items:
         raise ValidationError("Se requiere una lista no vacía de items")
-    normalized = []
+    aggregated: dict[int, int] = {}
     for it in items:
+        if not isinstance(it, dict):
+            raise ValidationError("Cada item debe ser un objeto con tipo_entrada_id y cantidad")
         tid = it.get("tipo_entrada_id")
         cantidad = it.get("cantidad")
-        try:
-            tid = int(tid)
-            cantidad = int(cantidad)
-        except (TypeError, ValueError):
-            raise ValidationError("tipo_entrada_id y cantidad deben ser enteros")
-        if cantidad <= 0:
-            raise ValidationError("La cantidad debe ser mayor a 0")
-        normalized.append({"tipo_entrada_id": tid, "cantidad": cantidad})
-    return normalized
+        if isinstance(tid, bool) or not isinstance(tid, int) or tid <= 0:
+            raise ValidationError("tipo_entrada_id debe ser un entero positivo")
+        if isinstance(cantidad, bool) or not isinstance(cantidad, int) or cantidad <= 0:
+            raise ValidationError("cantidad debe ser un entero positivo")
+        aggregated[tid] = aggregated.get(tid, 0) + cantidad
+    return [{"tipo_entrada_id": tid, "cantidad": cant} for tid, cant in aggregated.items()]
 
 
 class CotizarStockUseCase:

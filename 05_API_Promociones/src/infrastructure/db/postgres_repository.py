@@ -71,7 +71,9 @@ class PostgresPromocionRepository(PromocionRepository):
                    "porcentaje": "porcentaje", "estado": "estado"}
         sets, params = [], []
         for key, column in allowed.items():
-            if key in fields and fields[key] is not None:
+            if key in fields:
+                if key != "cantidad_max" and fields[key] is None:
+                    continue
                 sets.append(f"{column} = %s")
                 params.append(fields[key])
         if sets:

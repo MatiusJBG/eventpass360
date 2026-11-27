@@ -27,3 +27,13 @@ class ValidationError(DomainError):
 class ConflictError(DomainError):
     status = 409
     code = "CONFLICT"
+
+
+class UnauthorizedError(DomainError):
+    status = 401
+    code = "UNAUTHORIZED"
+
+
+class ForbiddenError(DomainError):
+    status = 403
+    code = "FORBIDDEN"

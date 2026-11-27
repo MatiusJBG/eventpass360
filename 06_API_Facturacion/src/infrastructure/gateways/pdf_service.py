@@ -1,5 +1,7 @@
 """Generador de factura PDF académica con logo vectorial (ReportLab)."""
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -7,11 +9,14 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from src.domain.repositories import PdfGenerator
+
 BRAND = colors.HexColor("#1e1b4b")
 ACCENT = colors.HexColor("#7c3aed")
+MONEY = Decimal("0.01")
 
 
-class GenerarFacturaPdfService:
+class GenerarFacturaPdfService(PdfGenerator):
     def generar(self, numero, fecha, cliente, items, totales) -> bytes:
         buf = BytesIO()
         doc = SimpleDocTemplate(
@@ -21,19 +26,25 @@ class GenerarFacturaPdfService:
         styles = getSampleStyleSheet()
         title = ParagraphStyle("t", parent=styles["Title"], fontSize=24, textColor=BRAND, spaceAfter=2)
         sub = ParagraphStyle("s", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#555555"))
+        cell_style = ParagraphStyle("c", parent=styles["Normal"], fontSize=9, leading=11)
+
+        safe_numero = escape(str(numero))
+        safe_fecha = escape(fecha.isoformat())
+        safe_nombre = escape(str(cliente.get("nombre", "")))
+        safe_correo = escape(str(cliente.get("correo", "")))
 
         story = []
         story.append(Paragraph("EventPass 360", title))
         story.append(Paragraph("FACTURA ELECTRÓNICA ACADÉMICA", sub))
         story.append(Spacer(1, 6 * mm))
-        story.append(Paragraph(f"<b>Número:</b> {numero} &nbsp;&nbsp;&nbsp; <b>Fecha:</b> {fecha.isoformat()}", styles["Normal"]))
-        story.append(Paragraph(f"<b>Cliente:</b> {cliente.get('nombre', '')} &nbsp;&nbsp;&nbsp; <b>Correo:</b> {cliente.get('correo', '')}", styles["Normal"]))
+        story.append(Paragraph(f"<b>Número:</b> {safe_numero} &nbsp;&nbsp;&nbsp; <b>Fecha:</b> {safe_fecha}", styles["Normal"]))
+        story.append(Paragraph(f"<b>Cliente:</b> {safe_nombre} &nbsp;&nbsp;&nbsp; <b>Correo:</b> {safe_correo}", styles["Normal"]))
         story.append(Spacer(1, 8 * mm))
 
         data = [["Descripción", "Cantidad", "Precio Unit.", "Subtotal"]]
         for it in items:
             data.append([
-                str(it.get("descripcion", "")),
+                Paragraph(escape(str(it.get("descripcion", ""))), cell_style),
                 str(it.get("cantidad", "")),
                 self._money(it.get("precio_unitario", 0)),
                 self._money(it.get("subtotal", 0)),
@@ -92,7 +103,12 @@ class GenerarFacturaPdfService:
 
     @staticmethod
     def _money(value) -> str:
+        if isinstance(value, bool) or value is None:
+            return "0.00"
         try:
-            return f"{float(value):.2f}"
-        except (TypeError, ValueError):
+            d = Decimal(str(value))
+            if not d.is_finite():
+                return "0.00"
+            return f"{d.quantize(MONEY, rounding=ROUND_HALF_UP):.2f}"
+        except (InvalidOperation, TypeError, ValueError):
             return "0.00"

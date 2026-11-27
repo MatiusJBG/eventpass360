@@ -1,113 +1,220 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/api_client.dart';
+import '../../core/app_dependencies.dart';
 import '../../core/format.dart';
-import '../../core/session.dart';
 import '../../core/theme.dart';
-import '../../data/repositories.dart';
 import '../../domain/entities.dart';
-import '../widgets.dart';
+import '../../domain/ui_state.dart';
+import '../core/widgets/feedback_views.dart';
+import '../core/widgets/invoice_actions.dart';
+import '../core/widgets/status_badges.dart';
 
 class HistorialScreen extends StatefulWidget {
   const HistorialScreen({super.key});
+
   @override
-  State<HistorialScreen> createState() => _HistorialScreenState();
+  State<HistorialScreen> createState() => HistorialScreenState();
 }
 
-class _HistorialScreenState extends State<HistorialScreen> {
-  List<Compra>? _compras;
-  List<Factura>? _facturas;
-  String? _error;
+class HistorialScreenState extends State<HistorialScreen> {
+  UiState<List<Compra>> _state = const UiLoading();
+  Map<int, Factura> _facturasPorCompra = const {};
+  int? _anulandoId;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    reload();
   }
 
-  Future<void> _load() async {
+  Future<void> reload() async {
+    if (!mounted) return;
+    setState(() => _state = const UiLoading());
+    final deps = context.read<AppDependencies>();
     try {
-      final session = context.read<Session>();
-      final repo = ComprasRepository(ApiClient(session));
-      final frepo = FacturacionRepository(ApiClient(session));
-      final compras = await repo.listarCompras();
-      final facturas = await frepo.listarFacturas();
-      if (mounted) setState(() { _compras = compras; _facturas = facturas; });
+      final results = await Future.wait<dynamic>([
+        deps.compras.listarCompras(),
+        deps.facturacion.listarFacturas(),
+      ]);
+      if (!mounted) return;
+      final compras = results[0] as List<Compra>;
+      final facturas = results[1] as List<Factura>;
+      setState(() {
+        _facturasPorCompra = {for (final f in facturas) f.compraId: f};
+        _state = UiSuccess(compras);
+      });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _state = UiError(e.toString()));
     }
   }
 
-  Factura? _facturaDe(int compraId) {
-    for (final x in _facturas ?? []) {
-      if (x.compraId == compraId) return x;
+  Future<void> _anularCompra(Compra compra) async {
+    final confirmed = await ConfirmDialog.show(
+      context,
+      title: 'Anular compra #${compra.id}',
+      message:
+          'Se anulará la compra y su factura electrónica, y se restaurará el stock de las entradas. ¿Deseas continuar?',
+      confirmLabel: 'Anular compra',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _anulandoId = compra.id);
+    try {
+      await context.read<AppDependencies>().compras.anularCompra(compra.id);
+      if (!mounted) return;
+      showAppSnack(context, 'Compra #${compra.id} anulada y stock restaurado');
+      await reload();
+    } catch (e) {
+      if (mounted) showAppSnack(context, e.toString(), error: true);
+    } finally {
+      if (mounted) setState(() => _anulandoId = null);
     }
-    return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Historial y Facturas')),
-      body: _buildBody(),
-    );
-  }
+    final facturacionRepo = context.read<AppDependencies>().facturacion;
 
-  Widget _buildBody() {
-    if (_error != null) return ErrorView(_error!, onRetry: _load);
-    if (_compras == null) return const LoadingView();
-    if (_compras!.isEmpty) return const EmptyView('Aún no tienes compras');
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: _compras!.length,
-        itemBuilder: (context, i) {
-          final c = _compras![i];
-          final factura = _facturaDe(c.id);
-          return Card(
-            child: ExpansionTile(
-              leading: const Icon(Icons.receipt_long, color: accent),
-              title: Text('Compra #' + c.id.toString() + ' · ' + money(c.total)),
-              subtitle: Row(children: [EstadoBadge(c.estado), const SizedBox(width: 8), Text(fecha(c.fecha))]),
-              children: [
-                for (final d in c.detalles)
-                  ListTile(
-                    dense: true,
-                    title: Text(d.evento + ' - ' + d.tipo),
-                    subtitle: Text(d.cantidad.toString() + ' × ' + money(d.precioUnitario)),
-                    trailing: Text(money(d.subtotal)),
-                  ),
-                if (factura != null)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Historial y Facturas'),
+        actions: [
+          IconButton(
+            tooltip: 'Actualizar historial',
+            icon: const Icon(Icons.refresh),
+            onPressed: reload,
+          ),
+        ],
+      ),
+      body: switch (_state) {
+        UiLoading() => const LoadingView(label: 'Cargando historial...'),
+        UiError(:final message) => ErrorStateView(
+            message: message,
+            onRetry: reload,
+          ),
+        UiSuccess(:final data) when data.isEmpty => const EmptyStateView(
+            message: 'Aún no has realizado compras.',
+            icon: Icons.receipt_long_outlined,
+          ),
+        UiSuccess(:final data) => RefreshIndicator(
+            onRefresh: reload,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: data.length,
+              itemBuilder: (context, index) {
+                final compra = data[index];
+                final factura = _facturasPorCompra[compra.id];
+                final facturaId = factura?.id ?? compra.facturaId;
+                final facturaNumero =
+                    factura?.numero ?? compra.facturaNumero ?? '';
+                final facturaEstado = factura?.estado ?? compra.facturaEstado;
+                final anulando = _anulandoId == compra.id;
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: ExpansionTile(
+                    leading: const Icon(Icons.receipt_long, color: accent),
+                    title: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text('Factura ' + factura.numero, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        const SizedBox(width: 8),
-                        TextButton.icon(icon: const Icon(Icons.code), label: const Text('XML'), onPressed: () => _abrirUrl('http://localhost:5004/api/factura/' + factura.id.toString() + '/xml')),
-                        TextButton.icon(icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF'), onPressed: () => _abrirUrl('http://localhost:5004/api/factura/' + factura.id.toString() + '/pdf')),
+                        Text(
+                          'Compra #${compra.id} · ${money(compra.total)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        StatusBadge(compra.estado),
                       ],
                     ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 4,
+                        children: [
+                          Text(fecha(compra.fecha)),
+                          if (facturaNumero.isNotEmpty)
+                            Text(
+                              'Factura: $facturaNumero',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: brand,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    children: [
+                      const Divider(),
+                      for (final d in compra.detalles)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${d.evento} · ${d.tipo} (${d.cantidad} × ${money(d.precioUnitario)})',
+                                ),
+                              ),
+                              Text(
+                                money(d.subtotal),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const Divider(),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 4,
+                        children: [
+                          Text('Subtotal: ${money(compra.subtotal)}'),
+                          Text('Descuento: -${money(compra.descuento)}'),
+                          Text('Base: ${money(compra.baseImponible)}'),
+                          Text('IVA: ${money(compra.iva)}'),
+                          Text(
+                            'Total: ${money(compra.total)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (facturaId != null) ...[
+                            if (facturaEstado != null &&
+                                facturaEstado.isNotEmpty)
+                              StatusBadge(facturaEstado),
+                            InvoiceActionRow(
+                              facturaId: facturaId,
+                              facturaNumero: facturaNumero,
+                              facturacionRepo: facturacionRepo,
+                            ),
+                          ],
+                          if (compra.estado == 'CONFIRMADA')
+                            LoadingButton(
+                              loading: anulando,
+                              destructive: true,
+                              icon: Icons.block,
+                              label: 'Anular compra',
+                              loadingLabel: 'Anulando...',
+                              onPressed: () => _anularCompra(compra),
+                            ),
+                        ],
+                      ),
+                    ],
                   ),
-              ],
+                );
+              },
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _abrirUrl(String url) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Documento de factura'),
-        content: SelectableText(url),
-        actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar'))],
-      ),
+          ),
+      },
     );
   }
 }

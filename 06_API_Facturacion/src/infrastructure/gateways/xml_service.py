@@ -1,14 +1,19 @@
 """Generador de factura XML (esquema exacto del PDF)."""
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import xml.dom.minidom as minidom
 import xml.etree.ElementTree as ET
 
+from src.domain.repositories import XmlGenerator
 
-class GenerarFacturaXmlService:
+MONEY = Decimal("0.01")
+
+
+class GenerarFacturaXmlService(XmlGenerator):
     def generar(self, numero, fecha, cliente, items, totales) -> str:
         factura = ET.Element("Factura")
 
         cabecera = ET.SubElement(factura, "Cabecera")
-        ET.SubElement(cabecera, "Numero").text = numero
+        ET.SubElement(cabecera, "Numero").text = str(numero)
         ET.SubElement(cabecera, "Fecha").text = fecha.isoformat()
         ET.SubElement(cabecera, "Estado").text = "EMITIDA"
 
@@ -38,7 +43,12 @@ class GenerarFacturaXmlService:
 
     @staticmethod
     def _money(value) -> str:
+        if isinstance(value, bool) or value is None:
+            return "0.00"
         try:
-            return f"{float(value):.2f}"
-        except (TypeError, ValueError):
+            d = Decimal(str(value))
+            if not d.is_finite():
+                return "0.00"
+            return f"{d.quantize(MONEY, rounding=ROUND_HALF_UP):.2f}"
+        except (InvalidOperation, TypeError, ValueError):
             return "0.00"

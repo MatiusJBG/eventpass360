@@ -2,6 +2,11 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from src.presentation.middlewares.auth_guard import require_role
+from src.presentation.schemas.validators import (
+    parse_calcular_payload,
+    parse_create_promocion_payload,
+    parse_update_promocion_payload,
+)
 
 promocion_bp = Blueprint("promociones", __name__)
 
@@ -19,19 +24,16 @@ def list_promociones():
 @promocion_bp.post("/promociones")
 @require_role("ADMIN")
 def create_promocion():
-    data = request.get_json(silent=True) or {}
-    p = _c().crear_promocion.execute(data.get("cantidad_min"), data.get("cantidad_max"), data.get("porcentaje"))
+    cantidad_min, cantidad_max, porcentaje = parse_create_promocion_payload(request.get_json(silent=True))
+    p = _c().crear_promocion.execute(cantidad_min, cantidad_max, porcentaje)
     return jsonify(p.to_dict()), 201
 
 
 @promocion_bp.put("/promociones/<int:promocion_id>")
 @require_role("ADMIN")
 def update_promocion(promocion_id):
-    data = request.get_json(silent=True) or {}
-    p = _c().actualizar_promocion.execute(
-        promocion_id, cantidad_min=data.get("cantidad_min"), cantidad_max=data.get("cantidad_max"),
-        porcentaje=data.get("porcentaje"), estado=data.get("estado"),
-    )
+    kwargs = parse_update_promocion_payload(request.get_json(silent=True))
+    p = _c().actualizar_promocion.execute(promocion_id, **kwargs)
     return jsonify(p.to_dict()), 200
 
 
@@ -44,5 +46,5 @@ def delete_promocion(promocion_id):
 
 @promocion_bp.post("/promociones/calcular")
 def calcular():
-    data = request.get_json(silent=True) or {}
-    return jsonify(_c().calcular_promocion.execute(data.get("subtotal"), data.get("cantidad_total"))), 200
+    kwargs = parse_calcular_payload(request.get_json(silent=True))
+    return jsonify(_c().calcular_promocion.execute(**kwargs)), 200

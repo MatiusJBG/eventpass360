@@ -43,11 +43,14 @@ class PostgresCategoriaRepository(CategoriaRepository):
     def update(self, categoria_id, nombre=None, descripcion=None, estado=None):
         sets, params = [], []
         if nombre is not None:
-            sets.append("nombre = %s"); params.append(nombre)
+            sets.append("nombre = %s")
+            params.append(nombre)
         if descripcion is not None:
-            sets.append("descripcion = %s"); params.append(descripcion)
+            sets.append("descripcion = %s")
+            params.append(descripcion)
         if estado is not None:
-            sets.append("estado = %s"); params.append(estado)
+            sets.append("estado = %s")
+            params.append(estado)
         if sets:
             params.append(categoria_id)
             with self._conn() as conn:
@@ -136,8 +139,12 @@ class PostgresEventoRepository(EventoRepository):
         return self.find_by_id(evento_id)
 
     def delete(self, evento_id):
+        # Elimina primero los tipos_entrada hijos sin compras en la misma transacción
+        # para evitar ForeignKeyViolation al eliminar el evento padre.
         with self._conn() as conn:
-            conn.execute("DELETE FROM eventos WHERE id = %s", (evento_id,))
+            with conn.transaction():
+                conn.execute("DELETE FROM tipos_entrada WHERE evento_id = %s", (evento_id,))
+                conn.execute("DELETE FROM eventos WHERE id = %s", (evento_id,))
 
     def deactivate(self, evento_id):
         with self._conn() as conn:
@@ -227,7 +234,16 @@ class PostgresStockRepository(StockRepository):
     def __init__(self, database_url: str):
         self.database_url = database_url
 
+    @staticmethod
+    def _aggregate(items: list[dict]) -> list[dict]:
+        grouped: dict[int, int] = {}
+        for it in items:
+            tid = it["tipo_entrada_id"]
+            grouped[tid] = grouped.get(tid, 0) + it["cantidad"]
+        return [{"tipo_entrada_id": tid, "cantidad": cant} for tid, cant in grouped.items()]
+
     def cotizar(self, items):
+        items = self._aggregate(items)
         ids = [it["tipo_entrada_id"] for it in items]
         with get_connection(self.database_url) as conn:
             rows = conn.execute(
@@ -262,20 +278,33 @@ class PostgresStockRepository(StockRepository):
         return {"items": result_items, "subtotal_total": float(subtotal_total)}
 
     def descontar(self, items):
-        # Transacción atómica: si un solo ítem no alcanza, se revierte todo.
+        items = self._aggregate(items)
+        # Transacción atómica: verifica stock, tipo activo y evento activo.
         with get_connection(self.database_url) as conn:
-            for it in items:
-                cur = conn.execute(
-                    "UPDATE tipos_entrada SET stock = stock - %s WHERE id = %s AND estado = TRUE AND stock >= %s",
-                    (it["cantidad"], it["tipo_entrada_id"], it["cantidad"]),
-                )
-                if cur.rowcount == 0:
-                    raise ConflictError("Stock insuficiente o tipo de entrada no disponible")
+            with conn.transaction():
+                for it in items:
+                    cur = conn.execute(
+                        """UPDATE tipos_entrada
+                           SET stock = stock - %s
+                           WHERE id = %s
+                             AND estado = TRUE
+                             AND stock >= %s
+                             AND EXISTS (
+                                 SELECT 1 FROM eventos e
+                                 WHERE e.id = tipos_entrada.evento_id
+                                   AND e.estado = TRUE
+                             )""",
+                        (it["cantidad"], it["tipo_entrada_id"], it["cantidad"]),
+                    )
+                    if cur.rowcount == 0:
+                        raise ConflictError("Stock insuficiente o tipo de entrada no disponible")
 
     def restaurar(self, items):
+        items = self._aggregate(items)
         with get_connection(self.database_url) as conn:
-            for it in items:
-                conn.execute(
-                    "UPDATE tipos_entrada SET stock = stock + %s WHERE id = %s",
-                    (it["cantidad"], it["tipo_entrada_id"]),
-                )
+            with conn.transaction():
+                for it in items:
+                    conn.execute(
+                        "UPDATE tipos_entrada SET stock = stock + %s WHERE id = %s",
+                        (it["cantidad"], it["tipo_entrada_id"]),
+                    )

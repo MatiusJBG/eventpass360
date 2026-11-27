@@ -2,6 +2,13 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from src.presentation.middlewares.auth_guard import require_role
+from src.presentation.schemas.validators import (
+    get_json_body,
+    optional_bool,
+    optional_non_empty_str,
+    require_fields,
+    require_non_empty_str,
+)
 
 rol_bp = Blueprint("roles", __name__)
 
@@ -20,17 +27,21 @@ def list_roles():
 @rol_bp.post("/roles")
 @require_role("ADMIN")
 def create_rol():
-    data = request.get_json(silent=True) or {}
-    rol = _container().crear_rol_use_case.execute(data.get("nombre", ""))
+    data = get_json_body(request)
+    require_fields(data, ["nombre"])
+    nombre = require_non_empty_str(data.get("nombre"), "nombre")
+    rol = _container().crear_rol_use_case.execute(nombre)
     return jsonify(rol.to_dict()), 201
 
 
 @rol_bp.put("/roles/<int:rol_id>")
 @require_role("ADMIN")
 def update_rol(rol_id):
-    data = request.get_json(silent=True) or {}
+    data = get_json_body(request)
+    nombre = optional_non_empty_str(data.get("nombre"), "nombre")
+    estado = optional_bool(data.get("estado"), "estado")
     rol = _container().actualizar_rol_use_case.execute(
-        rol_id, nombre=data.get("nombre"), estado=data.get("estado")
+        rol_id, nombre=nombre, estado=estado
     )
     return jsonify(rol.to_dict()), 200
 

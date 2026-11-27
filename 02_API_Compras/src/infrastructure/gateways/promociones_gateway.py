@@ -2,9 +2,10 @@
 import requests
 
 from src.domain.exceptions import ServiceUnavailableError
+from src.domain.repositories import PromocionesGateway as PromocionesGatewayPort
 
 
-class PromocionesGateway:
+class PromocionesGateway(PromocionesGatewayPort):
     def __init__(self, base_url: str, timeout: int):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout

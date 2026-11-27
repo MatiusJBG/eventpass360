@@ -18,7 +18,7 @@ def load_database_url() -> str:
         return url
     env_file = BASE_DIR / ".env"
     if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
+        for line in env_file.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if line.startswith("DATABASE_URL="):
                 return line.split("=", 1)[1].strip()

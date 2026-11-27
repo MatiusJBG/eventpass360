@@ -1,25 +1,35 @@
 """Caso de uso de previsualización (cotización en vivo)."""
 from src.domain.exceptions import ConflictError, ValidationError
+from src.domain.repositories import EventosGateway, PromocionesGateway
+
+
+def _parse_positive_int(value, field_name: str) -> int:
+    if isinstance(value, (bool, float)) or value is None:
+        raise ValidationError(f"{field_name} debe ser un entero positivo")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{field_name} debe ser un entero positivo")
+    if parsed <= 0:
+        raise ValidationError(f"{field_name} debe ser mayor a 0")
+    return parsed
 
 
 def normalize_items(items) -> list[dict]:
     if not isinstance(items, list) or not items:
         raise ValidationError("Se requiere una lista no vacía de items")
-    normalized = []
+    aggregated: dict[int, int] = {}
     for it in items:
-        try:
-            tid = int(it.get("tipo_entrada_id"))
-            cantidad = int(it.get("cantidad"))
-        except (TypeError, ValueError):
-            raise ValidationError("tipo_entrada_id y cantidad deben ser enteros")
-        if cantidad <= 0:
-            raise ValidationError("La cantidad debe ser mayor a 0")
-        normalized.append({"tipo_entrada_id": tid, "cantidad": cantidad})
-    return normalized
+        if not isinstance(it, dict):
+            raise ValidationError("Cada item debe ser un objeto")
+        tid = _parse_positive_int(it.get("tipo_entrada_id"), "tipo_entrada_id")
+        cantidad = _parse_positive_int(it.get("cantidad"), "cantidad")
+        aggregated[tid] = aggregated.get(tid, 0) + cantidad
+    return [{"tipo_entrada_id": tid, "cantidad": qty} for tid, qty in aggregated.items()]
 
 
 class PrevisualizarCompraUseCase:
-    def __init__(self, eventos_gw, promociones_gw):
+    def __init__(self, eventos_gw: EventosGateway, promociones_gw: PromocionesGateway):
         self.eventos_gw = eventos_gw
         self.promociones_gw = promociones_gw
 

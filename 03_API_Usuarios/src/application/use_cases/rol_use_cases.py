@@ -19,12 +19,12 @@ class CrearRolUseCase:
         self.repo = repo
 
     def execute(self, nombre: str) -> Rol:
-        nombre = (nombre or "").strip()
-        if not nombre:
+        if not isinstance(nombre, str) or not nombre.strip():
             raise ValidationError("El nombre del rol es obligatorio")
-        if self.repo.find_by_nombre(nombre) is not None:
+        nombre_norm = nombre.strip()
+        if self.repo.find_by_nombre(nombre_norm) is not None:
             raise ConflictError("El rol ya existe")
-        return self.repo.create_rol(nombre)
+        return self.repo.create_rol(nombre_norm)
 
 
 class ActualizarRolUseCase:
@@ -34,12 +34,19 @@ class ActualizarRolUseCase:
     def execute(self, rol_id: int, nombre: Optional[str] = None, estado: Optional[bool] = None) -> Rol:
         if self.repo.find_by_id(rol_id) is None:
             raise NotFoundError("Rol no existe")
-        if nombre:
-            nombre = nombre.strip()
-            existing = self.repo.find_by_nombre(nombre)
+        if nombre is None and estado is None:
+            raise ValidationError("Nada que actualizar")
+        nombre_norm = None
+        if nombre is not None:
+            if not isinstance(nombre, str) or not nombre.strip():
+                raise ValidationError("El nombre del rol no puede estar vacío")
+            nombre_norm = nombre.strip()
+            existing = self.repo.find_by_nombre(nombre_norm)
             if existing is not None and existing.id != rol_id:
                 raise ConflictError("El rol ya existe")
-        return self.repo.update_rol(rol_id, nombre=nombre, estado=estado)
+        if estado is not None and not isinstance(estado, bool):
+            raise ValidationError("estado debe ser booleano")
+        return self.repo.update_rol(rol_id, nombre=nombre_norm, estado=estado)
 
 
 class EliminarRolUseCase:

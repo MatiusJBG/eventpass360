@@ -3,12 +3,22 @@ from typing import Optional
 
 from src.domain.entities import Usuario
 from src.domain.exceptions import ConflictError, NotFoundError, ValidationError
-from src.domain.repositories import RolRepository, UsuarioRepository
+from src.domain.repositories import PasswordHasher, RolRepository, UsuarioRepository
 
 
-def _validate_correo(correo: str) -> None:
-    if not correo or "@" not in correo:
+def _normalize_correo(correo) -> str:
+    if not isinstance(correo, str):
         raise ValidationError("Correo inválido")
+    correo_norm = correo.strip().lower()
+    if not correo_norm or "@" not in correo_norm:
+        raise ValidationError("Correo inválido")
+    return correo_norm
+
+
+def _validate_positive_int(value, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(f"{field} debe ser un entero positivo")
+    return value
 
 
 class ListarUsuariosUseCase:
@@ -20,51 +30,70 @@ class ListarUsuariosUseCase:
 
 
 class CrearUsuarioUseCase:
-    def __init__(self, repo: UsuarioRepository, rol_repo: RolRepository):
+    def __init__(self, repo: UsuarioRepository, rol_repo: RolRepository, password_hasher: PasswordHasher):
         self.repo = repo
         self.rol_repo = rol_repo
+        self.password_hasher = password_hasher
 
     def execute(self, rol_id: int, nombre: str, correo: str, password: str) -> Usuario:
-        if not nombre or not correo or not password:
+        rol_id_valid = _validate_positive_int(rol_id, "rol_id")
+        nombre_norm = nombre.strip() if isinstance(nombre, str) else ""
+        if not nombre_norm or not correo or not isinstance(password, str) or not password:
             raise ValidationError("nombre, correo y password son obligatorios")
-        _validate_correo(correo)
+        correo_norm = _normalize_correo(correo)
         if len(password) < 6:
             raise ValidationError("La contraseña debe tener al menos 6 caracteres")
-        if self.repo.find_by_correo(correo) is not None:
+        if self.repo.find_by_correo(correo_norm) is not None:
             raise ConflictError("El correo ya está registrado")
-        if self.rol_repo.find_by_id(rol_id) is None:
+        if self.rol_repo.find_by_id(rol_id_valid) is None:
             raise NotFoundError("Rol no existe")
-        from src.application.use_cases.auth_use_cases import _hash_password
-        return self.repo.create_usuario(rol_id, nombre, correo, _hash_password(password))
+        return self.repo.create_usuario(
+            rol_id_valid, nombre_norm, correo_norm, self.password_hasher.hash(password)
+        )
 
 
 class ActualizarUsuarioUseCase:
-    def __init__(self, repo: UsuarioRepository, rol_repo: RolRepository):
+    def __init__(self, repo: UsuarioRepository, rol_repo: RolRepository, password_hasher: PasswordHasher):
         self.repo = repo
         self.rol_repo = rol_repo
+        self.password_hasher = password_hasher
 
-    def execute(self, usuario_id: int, nombre=None, correo=None, rol_id=None, password=None) -> Usuario:
+    def execute(
+        self,
+        usuario_id: int,
+        nombre=None,
+        correo=None,
+        rol_id=None,
+        password=None,
+        estado=None,
+    ) -> Usuario:
         usuario = self.repo.find_by_id(usuario_id)
         if usuario is None:
             raise NotFoundError("Usuario no existe")
         fields = {}
-        if nombre:
-            fields["nombre"] = nombre
-        if correo:
-            _validate_correo(correo)
-            existing = self.repo.find_by_correo(correo)
+        if nombre is not None:
+            if not isinstance(nombre, str) or not nombre.strip():
+                raise ValidationError("El nombre no puede estar vacío")
+            fields["nombre"] = nombre.strip()
+        if correo is not None:
+            correo_norm = _normalize_correo(correo)
+            existing = self.repo.find_by_correo(correo_norm)
             if existing is not None and existing.id != usuario_id:
                 raise ConflictError("El correo ya está en uso")
-            fields["correo"] = correo
+            fields["correo"] = correo_norm
         if rol_id is not None:
-            if self.rol_repo.find_by_id(rol_id) is None:
+            rol_id_valid = _validate_positive_int(rol_id, "rol_id")
+            if self.rol_repo.find_by_id(rol_id_valid) is None:
                 raise NotFoundError("Rol no existe")
-            fields["rol_id"] = rol_id
-        if password:
-            if len(password) < 6:
+            fields["rol_id"] = rol_id_valid
+        if password is not None and password != "":
+            if not isinstance(password, str) or len(password) < 6:
                 raise ValidationError("La contraseña debe tener al menos 6 caracteres")
-            from src.application.use_cases.auth_use_cases import _hash_password
-            fields["password_hash"] = _hash_password(password)
+            fields["password_hash"] = self.password_hasher.hash(password)
+        if estado is not None:
+            if not isinstance(estado, bool):
+                raise ValidationError("estado debe ser booleano")
+            fields["estado"] = estado
         if not fields:
             raise ValidationError("Nada que actualizar")
         return self.repo.update_usuario(usuario_id, **fields)

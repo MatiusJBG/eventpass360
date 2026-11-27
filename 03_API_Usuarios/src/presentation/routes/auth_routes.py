@@ -2,6 +2,14 @@
 from flask import Blueprint, current_app, g, jsonify, request
 
 from src.presentation.middlewares.auth_guard import require_auth
+from src.presentation.schemas.validators import (
+    get_json_body,
+    optional_non_empty_str,
+    optional_password,
+    require_email,
+    require_fields,
+    require_non_empty_str,
+)
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -17,17 +25,22 @@ def health():
 
 @auth_bp.post("/login")
 def login():
-    data = request.get_json(silent=True) or {}
-    result = _container().login_use_case.execute(data.get("correo", ""), data.get("password", ""))
+    data = get_json_body(request)
+    require_fields(data, ["correo", "password"])
+    correo = require_non_empty_str(data.get("correo"), "correo").lower()
+    password = require_non_empty_str(data.get("password"), "password")
+    result = _container().login_use_case.execute(correo, password)
     return jsonify(result), 200
 
 
 @auth_bp.post("/registro")
 def registro():
-    data = request.get_json(silent=True) or {}
-    usuario = _container().registro_use_case.execute(
-        data.get("nombre", ""), data.get("correo", ""), data.get("password", "")
-    )
+    data = get_json_body(request)
+    require_fields(data, ["nombre", "correo", "password"])
+    nombre = require_non_empty_str(data.get("nombre"), "nombre")
+    correo = require_email(data.get("correo"))
+    password = require_non_empty_str(data.get("password"), "password")
+    usuario = _container().registro_use_case.execute(nombre, correo, password)
     return jsonify(usuario.to_dict()), 201
 
 
@@ -41,11 +54,14 @@ def get_perfil():
 @auth_bp.put("/perfil")
 @require_auth
 def put_perfil():
-    data = request.get_json(silent=True) or {}
+    data = get_json_body(request)
+    nombre = optional_non_empty_str(data.get("nombre"), "nombre")
+    correo = require_email(data["correo"]) if data.get("correo") is not None else None
+    password = optional_password(data.get("password"))
     usuario = _container().update_perfil_use_case.execute(
         int(g.current_user["sub"]),
-        nombre=data.get("nombre"),
-        correo=data.get("correo"),
-        password=data.get("password"),
+        nombre=nombre,
+        correo=correo,
+        password=password,
     )
     return jsonify(usuario.to_dict()), 200

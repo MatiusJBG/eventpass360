@@ -3,6 +3,11 @@ from flask import Blueprint, current_app, g, jsonify, request
 
 from src.domain.exceptions import ForbiddenError
 from src.presentation.middlewares.auth_guard import require_auth, require_role
+from src.presentation.schemas.validators import (
+    extract_auth_header,
+    parse_crear_compra_payload,
+    parse_previsualizar_payload,
+)
 
 compra_bp = Blueprint("compras", __name__)
 
@@ -14,18 +19,19 @@ def _c():
 @compra_bp.post("/compras/previsualizar")
 @require_auth
 def previsualizar():
-    data = request.get_json(silent=True) or {}
-    return jsonify(_c().previsualizar.execute(data.get("items", []))), 200
+    items = parse_previsualizar_payload(request.get_json(silent=True))
+    return jsonify(_c().previsualizar.execute(items)), 200
 
 
 @compra_bp.post("/compras")
 @require_auth
 def comprar():
-    data = request.get_json(silent=True) or {}
+    solicitud_id, items = parse_crear_compra_payload(request.get_json(silent=True))
     user = g.current_user
     usuario = {"sub": int(user["sub"]), "nombre": user.get("nombre", ""), "correo": user.get("correo", "")}
+    auth_header = extract_auth_header(request.headers)
     resultado, created = _c().crear_compra.execute(
-        usuario, data.get("solicitud_id", ""), data.get("items", [])
+        usuario, solicitud_id, items, auth_header=auth_header
     )
     return jsonify(resultado), 201 if created else 200
 
@@ -64,5 +70,6 @@ def anular(compra_id):
     user = g.current_user
     if user.get("rol") != "ADMIN" and int(user["sub"]) != compra.usuario_id:
         raise ForbiddenError("Sin permiso para anular esta compra")
-    resultado = _c().anular_compra.execute(compra_id)
+    auth_header = extract_auth_header(request.headers)
+    resultado = _c().anular_compra.execute(compra_id, auth_header=auth_header)
     return jsonify(resultado.to_dict()), 200
