@@ -1,17 +1,19 @@
 """Casos de uso de autenticación y perfil (SRP)."""
 import datetime
+from typing import Optional
 import jwt
 
 from src.config.settings import Settings
 from src.domain.entities import Usuario
 from src.domain.exceptions import ConflictError, NotFoundError, UnauthorizedError, ValidationError
 from src.domain.repositories import PasswordHasher, RolRepository, UsuarioRepository
-
-
-def _normalize_correo(correo) -> str:
-    if not isinstance(correo, str):
-        return ""
-    return correo.strip().lower()
+from src.domain.validators import (
+    validate_correo,
+    validate_nombre_usuario,
+    validate_password_login,
+    validate_password_strict,
+    validate_positive_int,
+)
 
 
 class LoginUseCase:
@@ -21,16 +23,15 @@ class LoginUseCase:
         self.password_hasher = password_hasher
 
     def execute(self, correo: str, password: str) -> dict:
-        correo_norm = _normalize_correo(correo)
-        if not correo_norm or not isinstance(password, str) or not password:
-            raise UnauthorizedError("Credenciales inválidas")
+        correo_norm = validate_correo(correo)
+        password_valid = validate_password_login(password)
         result = self.repo.find_auth_by_correo(correo_norm)
         if result is None:
             raise UnauthorizedError("Credenciales inválidas")
         usuario, password_hash = result
         if not usuario.estado:
             raise UnauthorizedError("Usuario desactivado")
-        if not self.password_hasher.verify(password, password_hash):
+        if not self.password_hasher.verify(password_valid, password_hash):
             raise UnauthorizedError("Credenciales inválidas")
         exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=self.settings.jwt_expires_minutes)
         payload = {
@@ -51,14 +52,9 @@ class RegistroUseCase:
         self.password_hasher = password_hasher
 
     def execute(self, nombre: str, correo: str, password: str) -> Usuario:
-        nombre_norm = nombre.strip() if isinstance(nombre, str) else ""
-        correo_norm = _normalize_correo(correo)
-        if not nombre_norm or not correo_norm or not isinstance(password, str) or not password:
-            raise ValidationError("nombre, correo y password son obligatorios")
-        if "@" not in correo_norm:
-            raise ValidationError("Correo inválido")
-        if len(password) < 6:
-            raise ValidationError("La contraseña debe tener al menos 6 caracteres")
+        nombre_norm = validate_nombre_usuario(nombre, "nombre")
+        correo_norm = validate_correo(correo)
+        password_valid = validate_password_strict(password)
         if self.repo.find_by_correo(correo_norm) is not None:
             raise ConflictError("El correo ya está registrado")
         # Registro público SIEMPRE como CLIENTE (impide escalación a ADMIN)
@@ -66,7 +62,7 @@ class RegistroUseCase:
         if rol_cliente is None:
             raise ConflictError("Rol CLIENTE no configurado")
         return self.repo.create_usuario(
-            rol_cliente.id, nombre_norm, correo_norm, self.password_hasher.hash(password)
+            rol_cliente.id, nombre_norm, correo_norm, self.password_hasher.hash(password_valid)
         )
 
 
@@ -91,32 +87,29 @@ class UpdatePerfilUseCase:
     def execute(
         self,
         usuario_id: int,
-        nombre: str | None = None,
-        correo: str | None = None,
-        password: str | None = None,
+        nombre: Optional[str] = None,
+        correo: Optional[str] = None,
+        password: Optional[str] = None,
+        row_version: Optional[int] = None,
     ) -> Usuario:
         usuario = self.repo.find_by_id(usuario_id)
         if usuario is None:
             raise NotFoundError("Usuario no encontrado")
         if not usuario.estado:
             raise UnauthorizedError("Usuario inactivo")
+        expected_version = validate_positive_int(row_version, "row_version") if row_version is not None else None
         fields = {}
         if nombre is not None:
-            if not isinstance(nombre, str) or not nombre.strip():
-                raise ValidationError("El nombre no puede estar vacío")
-            fields["nombre"] = nombre.strip()
+            fields["nombre"] = validate_nombre_usuario(nombre, "nombre")
         if correo is not None:
-            correo_norm = _normalize_correo(correo)
-            if not correo_norm or "@" not in correo_norm:
-                raise ValidationError("Correo inválido")
+            correo_norm = validate_correo(correo)
             existing = self.repo.find_by_correo(correo_norm)
             if existing is not None and existing.id != usuario_id:
                 raise ConflictError("El correo ya está en uso")
             fields["correo"] = correo_norm
         if password is not None and password != "":
-            if not isinstance(password, str) or len(password) < 6:
-                raise ValidationError("La contraseña debe tener al menos 6 caracteres")
-            fields["password_hash"] = self.password_hasher.hash(password)
+            password_valid = validate_password_strict(password)
+            fields["password_hash"] = self.password_hasher.hash(password_valid)
         if not fields:
             raise ValidationError("Nada que actualizar")
-        return self.repo.update_usuario(usuario_id, **fields)
+        return self.repo.update_usuario(usuario_id, expected_version=expected_version, **fields)

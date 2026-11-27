@@ -22,10 +22,11 @@ class PostgresFacturaRepository(FacturaRepository):
             xml=row.get("xml", "") if include_content else "",
             pdf_base64=row.get("pdf_base64", "") if include_content else "",
             usuario_id=row.get("usuario_id"),
+            row_version=row.get("row_version", 1),
         )
 
     def _select(self, where, params, include_content=True):
-        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, c.usuario_id"
+        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, f.row_version, c.usuario_id"
         if include_content:
             cols += ", f.xml, f.pdf_base64"
         with get_connection(self.database_url) as conn:
@@ -42,7 +43,7 @@ class PostgresFacturaRepository(FacturaRepository):
         return self._select("WHERE f.id = %s", (factura_id,), include_content=True)
 
     def list_all(self, compra_id=None, usuario_id=None):
-        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, c.usuario_id"
+        cols = "f.id, f.compra_id, f.numero, f.fecha, f.estado, f.row_version, c.usuario_id"
         sql = f"SELECT {cols} FROM facturas f JOIN compras c ON c.id = f.compra_id"
         clauses = []
         params = []
@@ -78,7 +79,30 @@ class PostgresFacturaRepository(FacturaRepository):
             raise ConflictError("Ya existe una factura para esta compra") from exc
         return self.find_by_id(row["id"])
 
-    def anular(self, factura_id):
+    def anular(self, factura_id, expected_version=None):
+        if expected_version is not None:
+            sql = (
+                "UPDATE facturas SET estado = 'ANULADA', row_version = row_version + 1 "
+                "WHERE id = %s AND estado = 'EMITIDA' AND row_version = %s "
+                "RETURNING id, compra_id, numero, fecha, estado, row_version"
+            )
+            params = (factura_id, expected_version)
+        else:
+            sql = (
+                "UPDATE facturas SET estado = 'ANULADA', row_version = row_version + 1 "
+                "WHERE id = %s AND estado = 'EMITIDA' "
+                "RETURNING id, compra_id, numero, fecha, estado, row_version"
+            )
+            params = (factura_id,)
         with get_connection(self.database_url) as conn:
-            conn.execute("UPDATE facturas SET estado = 'ANULADA' WHERE id = %s", (factura_id,))
-        return self.find_by_id(factura_id)
+            row = conn.execute(sql, params).fetchone()
+        if row is None:
+            existing = self.find_by_id(factura_id)
+            if existing is not None:
+                if existing.estado == "ANULADA":
+                    raise ConflictError("La factura ya se encuentra anulada")
+                raise ConflictError(
+                    "Conflicto de concurrencia: la factura fue modificada por otro usuario. Recarga e intenta nuevamente."
+                )
+            return None
+        return self._row(row, include_content=False)

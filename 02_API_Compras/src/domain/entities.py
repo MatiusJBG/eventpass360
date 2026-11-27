@@ -42,6 +42,7 @@ class Compra:
     usuario_nombre: str = ""
     usuario_correo: str = ""
     detalles: list = field(default_factory=list)
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -57,5 +58,6 @@ class Compra:
             "iva": float(self.iva),
             "total": float(self.total),
             "estado": self.estado,
+            "row_version": self.row_version,
             "detalles": [d.to_dict() for d in self.detalles],
         }

@@ -4,11 +4,15 @@ from flask import Blueprint, current_app, g, jsonify, request
 from src.presentation.middlewares.auth_guard import require_auth
 from src.presentation.schemas.validators import (
     get_json_body,
+    optional_email,
     optional_non_empty_str,
     optional_password,
+    optional_positive_int,
     require_email,
     require_fields,
-    require_non_empty_str,
+    require_nombre_usuario,
+    require_password,
+    require_password_login,
 )
 
 auth_bp = Blueprint("auth", __name__)
@@ -27,8 +31,8 @@ def health():
 def login():
     data = get_json_body(request)
     require_fields(data, ["correo", "password"])
-    correo = require_non_empty_str(data.get("correo"), "correo").lower()
-    password = require_non_empty_str(data.get("password"), "password")
+    correo = require_email(data.get("correo"))
+    password = require_password_login(data.get("password"))
     result = _container().login_use_case.execute(correo, password)
     return jsonify(result), 200
 
@@ -37,9 +41,9 @@ def login():
 def registro():
     data = get_json_body(request)
     require_fields(data, ["nombre", "correo", "password"])
-    nombre = require_non_empty_str(data.get("nombre"), "nombre")
+    nombre = require_nombre_usuario(data.get("nombre"), "nombre")
     correo = require_email(data.get("correo"))
-    password = require_non_empty_str(data.get("password"), "password")
+    password = require_password(data.get("password"))
     usuario = _container().registro_use_case.execute(nombre, correo, password)
     return jsonify(usuario.to_dict()), 201
 
@@ -56,12 +60,14 @@ def get_perfil():
 def put_perfil():
     data = get_json_body(request)
     nombre = optional_non_empty_str(data.get("nombre"), "nombre")
-    correo = require_email(data["correo"]) if data.get("correo") is not None else None
+    correo = optional_email(data.get("correo"))
     password = optional_password(data.get("password"))
+    row_version = optional_positive_int(data.get("row_version"), "row_version")
     usuario = _container().update_perfil_use_case.execute(
         int(g.current_user["sub"]),
         nombre=nombre,
         correo=correo,
         password=password,
+        row_version=row_version,
     )
     return jsonify(usuario.to_dict()), 200

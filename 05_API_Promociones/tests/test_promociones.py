@@ -64,14 +64,21 @@ class InMemoryPromocionRepo(PromocionRepository):
         self._items[pid] = p
         return p
 
-    def update(self, promocion_id, **fields):
-        actual = self._items[promocion_id]
+    def update(self, promocion_id, expected_version=None, **fields):
+        actual = self._items.get(promocion_id)
+        if actual is None:
+            return None
+        if expected_version is not None and actual.row_version != expected_version:
+            raise ConflictError(
+                "Conflicto de concurrencia: la promoción fue modificada por otro usuario. Recarga e intenta nuevamente."
+            )
         updated = Promocion(
             id=actual.id,
             cantidad_min=fields.get("cantidad_min", actual.cantidad_min),
             cantidad_max=fields["cantidad_max"] if "cantidad_max" in fields else actual.cantidad_max,
             porcentaje=fields.get("porcentaje", actual.porcentaje),
             estado=fields.get("estado", actual.estado),
+            row_version=actual.row_version + 1,
         )
         self._items[promocion_id] = updated
         return updated
@@ -235,6 +242,89 @@ class PromocionesTestCase(unittest.TestCase):
             json={"cantidad_min": True},
         )
         self.assertEqual(resp_put.status_code, 400)
+
+    def test_row_version_increment_and_occ_conflict_409(self):
+        # Initial row_version is 1
+        r_list = self.client.get("/api/promociones")
+        self.assertEqual(r_list.status_code, 200)
+        promo1 = next(p for p in r_list.get_json() if p["id"] == 1)
+        self.assertEqual(promo1["row_version"], 1)
+
+        # Matching row_version succeeds and increments to 2
+        r_ok = self.client.put(
+            "/api/promociones/1",
+            headers=self.admin_headers,
+            json={"porcentaje": 6.5, "row_version": 1},
+        )
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertEqual(r_ok.get_json()["row_version"], 2)
+
+        # Stale row_version=1 returns 409 Conflict
+        r_stale = self.client.put(
+            "/api/promociones/1",
+            headers=self.admin_headers,
+            json={"porcentaje": 7.0, "row_version": 1},
+        )
+        self.assertEqual(r_stale.status_code, 409)
+
+        # Invalid row_version (bool/float/zero/emoji) returns 400
+        for bad_rv in (True, False, 0, -1, 1.5, "1🔥", "abc"):
+            r_bad = self.client.put(
+                "/api/promociones/1",
+                headers=self.admin_headers,
+                json={"porcentaje": 7.0, "row_version": bad_rv},
+            )
+            self.assertEqual(r_bad.status_code, 400, f"Expected 400 for row_version={bad_rv}")
+
+    def test_postgres_repo_update_occ_sql_and_conflict(self):
+        pg_repo = PostgresPromocionRepository("postgresql://fake")
+        mock_conn = MagicMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_conn
+        mock_ctx.__exit__.return_value = False
+        # First execute (UPDATE ... RETURNING) returns None; second (find_by_id) returns existing row -> ConflictError
+        mock_conn.execute.return_value.fetchone.side_effect = [
+            None,
+            {"id": 1, "cantidad_min": 3, "cantidad_max": 4, "porcentaje": Decimal("5.00"), "estado": True, "row_version": 2},
+        ]
+        with patch("src.infrastructure.db.postgres_repository.get_connection", return_value=mock_ctx):
+            with self.assertRaises(ConflictError):
+                pg_repo.update(1, expected_version=1, porcentaje=Decimal("6.00"))
+        sql, params = mock_conn.execute.call_args_list[0][0]
+        self.assertIn("row_version = row_version + 1", sql)
+        self.assertIn("WHERE id = %s AND row_version = %s RETURNING", sql)
+        self.assertEqual(params[-2:], (1, 1))
+
+    def test_reject_emojis_and_strict_numeric_validation_400(self):
+        # Emojis in create, update, and calcular
+        for endpoint, method, payload in (
+            ("/api/promociones", "post", {"cantidad_min": "3😀", "porcentaje": 5}),
+            ("/api/promociones", "post", {"cantidad_min": 11, "cantidad_max": "20🔥", "porcentaje": 5}),
+            ("/api/promociones", "post", {"cantidad_min": 11, "porcentaje": "10🎉"}),
+            ("/api/promociones/1", "put", {"porcentaje": "5.5🚀"}),
+            ("/api/promociones/calcular", "post", {"subtotal": "75😀", "cantidad_total": 3}),
+            ("/api/promociones/calcular", "post", {"subtotal": 75, "cantidad_total": "3🎫"}),
+            ("/api/promociones/calcular", "post", {"items": [{"cantidad": "2😎", "precio_unitario": 25}]}),
+            ("/api/promociones/calcular", "post", {"items": [{"cantidad": 2, "precio_unitario": "25💰"}]}),
+        ):
+            fn = getattr(self.client, method)
+            resp = fn(endpoint, headers=self.admin_headers, json=payload)
+            self.assertEqual(resp.status_code, 400, f"Expected 400 for {endpoint} {payload}")
+
+        # Strict numeric / decimal bounds
+        for bad_payload in (
+            {"cantidad_min": 1.5, "porcentaje": 5},
+            {"cantidad_min": 1_000_001, "porcentaje": 5},
+            {"cantidad_min": 1, "cantidad_max": 1_000_001, "porcentaje": 5},
+            {"cantidad_min": 1, "cantidad_max": 2, "porcentaje": 10.123},
+            {"cantidad_min": 1, "cantidad_max": 2, "porcentaje": "10.123"},
+            {"cantidad_min": 1, "cantidad_max": 2, "porcentaje": "abc"},
+            {"cantidad_min": 1, "cantidad_max": 2, "porcentaje": -1},
+            {"cantidad_min": 1, "cantidad_max": 2, "porcentaje": 101},
+            {"cantidad_min": "1.0", "porcentaje": 5},
+        ):
+            resp = self.client.post("/api/promociones", headers=self.admin_headers, json=bad_payload)
+            self.assertEqual(resp.status_code, 400, f"Expected 400 for {bad_payload}")
 
 
 if __name__ == "__main__":

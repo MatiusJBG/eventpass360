@@ -5,6 +5,7 @@ from src.domain.exceptions import ForbiddenError
 from src.presentation.middlewares.auth_guard import require_auth, require_role
 from src.presentation.schemas.validators import (
     extract_auth_header,
+    parse_anular_compra_payload,
     parse_crear_compra_payload,
     parse_previsualizar_payload,
 )
@@ -66,10 +67,13 @@ def obtener(compra_id):
 @compra_bp.patch("/compras/<int:compra_id>/anular")
 @require_auth
 def anular(compra_id):
+    expected_version = parse_anular_compra_payload(request.get_json(silent=True))
     compra = _c().obtener_compra.execute(compra_id)
     user = g.current_user
     if user.get("rol") != "ADMIN" and int(user["sub"]) != compra.usuario_id:
         raise ForbiddenError("Sin permiso para anular esta compra")
     auth_header = extract_auth_header(request.headers)
-    resultado = _c().anular_compra.execute(compra_id, auth_header=auth_header)
+    resultado = _c().anular_compra.execute(
+        compra_id, auth_header=auth_header, expected_version=expected_version
+    )
     return jsonify(resultado.to_dict()), 200

@@ -22,6 +22,7 @@ class PostgresCompraRepository(CompraRepository):
             base_imponible=row["base_imponible"], iva=row["iva"], total=row["total"],
             estado=row["estado"], usuario_nombre=row.get("usuario_nombre", ""),
             usuario_correo=row.get("usuario_correo", ""), detalles=detalles or [],
+            row_version=row.get("row_version", 1),
         )
 
     @staticmethod
@@ -49,7 +50,7 @@ class PostgresCompraRepository(CompraRepository):
         with get_connection(self.database_url) as conn:
             row = conn.execute(
                 f"""SELECT c.id, c.usuario_id, c.solicitud_id, c.fecha, c.subtotal, c.descuento,
-                           c.base_imponible, c.iva, c.total, c.estado,
+                           c.base_imponible, c.iva, c.total, c.estado, c.row_version,
                            u.nombre AS usuario_nombre, u.correo AS usuario_correo
                     FROM compras c JOIN usuarios u ON u.id = c.usuario_id {where}""",
                 params,
@@ -66,7 +67,7 @@ class PostgresCompraRepository(CompraRepository):
 
     def list_all(self, usuario_id=None):
         sql = """SELECT c.id, c.usuario_id, c.solicitud_id, c.fecha, c.subtotal, c.descuento,
-                        c.base_imponible, c.iva, c.total, c.estado,
+                        c.base_imponible, c.iva, c.total, c.estado, c.row_version,
                         u.nombre AS usuario_nombre, u.correo AS usuario_correo
                  FROM compras c JOIN usuarios u ON u.id = c.usuario_id"""
         params = ()
@@ -110,14 +111,25 @@ class PostgresCompraRepository(CompraRepository):
 
     def update_estado(self, compra_id, estado):
         with get_connection(self.database_url) as conn:
-            conn.execute("UPDATE compras SET estado = %s WHERE id = %s", (estado, compra_id))
+            conn.execute(
+                "UPDATE compras SET estado = %s, row_version = row_version + 1 WHERE id = %s",
+                (estado, compra_id),
+            )
 
-    def transition_estado(self, compra_id: int, from_estado: str, to_estado: str) -> bool:
+    def transition_estado(self, compra_id: int, from_estado: str, to_estado: str, expected_version=None) -> bool:
         with get_connection(self.database_url) as conn:
-            row = conn.execute(
-                "UPDATE compras SET estado = %s WHERE id = %s AND estado = %s RETURNING id",
-                (to_estado, compra_id, from_estado),
-            ).fetchone()
+            if expected_version is not None:
+                row = conn.execute(
+                    "UPDATE compras SET estado = %s, row_version = row_version + 1 "
+                    "WHERE id = %s AND estado = %s AND row_version = %s RETURNING id",
+                    (to_estado, compra_id, from_estado, expected_version),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "UPDATE compras SET estado = %s, row_version = row_version + 1 "
+                    "WHERE id = %s AND estado = %s RETURNING id",
+                    (to_estado, compra_id, from_estado),
+                ).fetchone()
         return row is not None
 
     def estadisticas(self):
@@ -143,5 +155,8 @@ class PostgresCompraRepository(CompraRepository):
 
     def anular(self, compra_id):
         with get_connection(self.database_url) as conn:
-            conn.execute("UPDATE compras SET estado = 'ANULADA' WHERE id = %s", (compra_id,))
+            conn.execute(
+                "UPDATE compras SET estado = 'ANULADA', row_version = row_version + 1 WHERE id = %s",
+                (compra_id,),
+            )
         return self.find_by_id(compra_id)

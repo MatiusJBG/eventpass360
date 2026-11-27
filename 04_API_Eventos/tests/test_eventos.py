@@ -17,6 +17,10 @@ from src.domain.repositories import (
     TipoEntradaRepository,
 )
 
+OCC_CONFLICT_MSG = (
+    "Conflicto de concurrencia: el registro fue modificado por otro usuario. Recarga e intenta nuevamente."
+)
+
 
 class FakeCategoriaRepository(CategoriaRepository):
     def __init__(self):
@@ -44,13 +48,16 @@ class FakeCategoriaRepository(CategoriaRepository):
         self._next_id += 1
         return cat
 
-    def update(self, categoria_id: int, nombre=None, descripcion=None, estado=None) -> Categoria:
+    def update(self, categoria_id: int, nombre=None, descripcion=None, estado=None, expected_version=None) -> Categoria:
         c = self._items[categoria_id]
+        if expected_version is not None and c.row_version != expected_version:
+            raise ConflictError(OCC_CONFLICT_MSG)
         updated = Categoria(
             id=c.id,
             nombre=nombre if nombre is not None else c.nombre,
             descripcion=descripcion if descripcion is not None else c.descripcion,
             estado=estado if estado is not None else c.estado,
+            row_version=c.row_version + 1,
         )
         self._items[categoria_id] = updated
         return updated
@@ -63,7 +70,9 @@ class FakeCategoriaRepository(CategoriaRepository):
 
     def deactivate(self, categoria_id: int) -> None:
         c = self._items[categoria_id]
-        self._items[categoria_id] = Categoria(id=c.id, nombre=c.nombre, descripcion=c.descripcion, estado=False)
+        self._items[categoria_id] = Categoria(
+            id=c.id, nombre=c.nombre, descripcion=c.descripcion, estado=False, row_version=c.row_version + 1
+        )
 
 
 class FakeEventoRepository(EventoRepository):
@@ -106,8 +115,10 @@ class FakeEventoRepository(EventoRepository):
         self._next_id += 1
         return ev
 
-    def update(self, evento_id: int, **fields) -> Evento:
+    def update(self, evento_id: int, expected_version=None, **fields) -> Evento:
         e = self._items[evento_id]
+        if expected_version is not None and e.row_version != expected_version:
+            raise ConflictError(OCC_CONFLICT_MSG)
         cat_id = fields.get("categoria_id", e.categoria_id)
         cat = self._cat_repo.find_by_id(cat_id)
         updated = Evento(
@@ -120,6 +131,7 @@ class FakeEventoRepository(EventoRepository):
             imagen_url=fields.get("imagen_url", e.imagen_url),
             estado=fields.get("estado", e.estado),
             categoria_nombre=cat.nombre if cat else None,
+            row_version=e.row_version + 1,
         )
         self._items[evento_id] = updated
         return updated
@@ -175,8 +187,10 @@ class FakeTipoEntradaRepository(TipoEntradaRepository):
         self._next_id += 1
         return te
 
-    def update(self, tipo_id: int, **fields) -> TipoEntrada:
+    def update(self, tipo_id: int, expected_version=None, **fields) -> TipoEntrada:
         t = self._items[tipo_id]
+        if expected_version is not None and t.row_version != expected_version:
+            raise ConflictError(OCC_CONFLICT_MSG)
         updated = TipoEntrada(
             id=t.id,
             evento_id=t.evento_id,
@@ -185,6 +199,7 @@ class FakeTipoEntradaRepository(TipoEntradaRepository):
             stock=fields.get("stock", t.stock),
             estado=fields.get("estado", t.estado),
             evento_nombre=t.evento_nombre,
+            row_version=t.row_version + 1,
         )
         self._items[tipo_id] = updated
         return updated
@@ -461,6 +476,186 @@ class EventosApiTestCase(unittest.TestCase):
             json={"items": [{"tipo_entrada_id": self.vip.id, "cantidad": 1}]},
         )
         self.assertEqual(r.status_code, 409)
+
+    # --- Optimistic Concurrency Control (row_version) ---
+    def test_occ_categoria_evento_tipo_entrada_and_stale_409(self):
+        headers = self._auth_header("ADMIN")
+
+        # Categoria
+        r_c1 = self.client.put("/api/categorias/1", headers=headers, json={"nombre": "Música Vivo", "row_version": 1})
+        self.assertEqual(r_c1.status_code, 200)
+        self.assertEqual(r_c1.get_json()["row_version"], 2)
+        r_c_stale = self.client.put("/api/categorias/1", headers=headers, json={"nombre": "Otra Cat", "row_version": 1})
+        self.assertEqual(r_c_stale.status_code, 409)
+        self.assertEqual(
+            self.client.put("/api/categorias/1", headers=headers, json={"nombre": "Otra Cat", "row_version": True}).status_code,
+            400,
+        )
+
+        # Evento
+        r_e1 = self.client.put(
+            f"/api/eventos/{self.evento.id}",
+            headers=headers,
+            json={"nombre": "Rock Fest 2026", "row_version": 1},
+        )
+        self.assertEqual(r_e1.status_code, 200)
+        self.assertEqual(r_e1.get_json()["row_version"], 2)
+        r_e_stale = self.client.put(
+            f"/api/eventos/{self.evento.id}",
+            headers=headers,
+            json={"nombre": "Rock Stale", "row_version": 1},
+        )
+        self.assertEqual(r_e_stale.status_code, 409)
+        self.assertEqual(
+            self.client.put(
+                f"/api/eventos/{self.evento.id}", headers=headers, json={"nombre": "Rock", "row_version": 0}
+            ).status_code,
+            400,
+        )
+
+        # TipoEntrada
+        r_t1 = self.client.put(
+            f"/api/tipos-entrada/{self.vip.id}",
+            headers=headers,
+            json={"precio": 120.50, "row_version": 1},
+        )
+        self.assertEqual(r_t1.status_code, 200)
+        self.assertEqual(r_t1.get_json()["row_version"], 2)
+        r_t_stale = self.client.put(
+            f"/api/tipos-entrada/{self.vip.id}",
+            headers=headers,
+            json={"precio": 130.00, "row_version": 1},
+        )
+        self.assertEqual(r_t_stale.status_code, 409)
+
+        # Stock operations also increment row_version
+        cli_h = self._auth_header("CLIENTE")
+        self.assertEqual(
+            self.client.post(
+                "/api/stock/descontar",
+                headers=cli_h,
+                json={"items": [{"tipo_entrada_id": self.vip.id, "cantidad": 1}]},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(self.tipo_repo.find_by_id(self.vip.id).row_version, 3)
+
+    # --- Strict No-Emoji Validation ---
+    def test_emoji_rejected_400_on_all_eventos_fields(self):
+        headers = self._auth_header("ADMIN")
+
+        self.assertEqual(
+            self.client.post("/api/categorias", headers=headers, json={"nombre": "Música 🎵"}).status_code, 400
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/categorias", headers=headers, json={"nombre": "Teatro", "descripcion": "Obras 🎭"}
+            ).status_code,
+            400,
+        )
+        self.assertEqual(self.client.get("/api/eventos?q=Rock🎸").status_code, 400)
+
+        base_ev = {
+            "categoria_id": 1,
+            "nombre": "Festival Quito",
+            "descripcion": "Descripcion valida del evento",
+            "lugar": "Estadio Olimpico",
+            "fecha": "2026-12-20T19:00:00Z",
+            "imagen_url": "https://cdn.example.com/rock.jpg",
+        }
+        for field, bad_val in (
+            ("nombre", "Festival 🔥"),
+            ("descripcion", "Evento increible 🎉"),
+            ("lugar", "Quito 🇪🇨"),
+            ("fecha", "2026-12-20T19:00:00Z ⏰"),
+            ("imagen_url", "https://cdn.example.com/rock🎸.jpg"),
+        ):
+            payload = dict(base_ev, **{field: bad_val})
+            r = self.client.post("/api/eventos", headers=headers, json=payload)
+            self.assertEqual(r.status_code, 400, f"Expected 400 for emoji in {field}")
+            self.assertIn("No se permiten emojis", r.get_json()["message"])
+
+        self.assertEqual(
+            self.client.post(
+                "/api/tipos-entrada",
+                headers=headers,
+                json={"evento_id": self.evento.id, "tipo": "Palco ⭐", "precio": 50, "stock": 10},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/tipos-entrada",
+                headers=headers,
+                json={"evento_id": self.evento.id, "tipo": "Palco", "precio": "50💵", "stock": 10},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/tipos-entrada",
+                headers=headers,
+                json={"evento_id": self.evento.id, "tipo": "Palco", "precio": 50, "stock": "10🎟️"},
+            ).status_code,
+            400,
+        )
+
+    # --- Strict URL / Fecha / Descripcion / Precio / Stock Validation ---
+    def test_strict_url_fecha_precio_stock_validation(self):
+        headers = self._auth_header("ADMIN")
+        base_ev = {
+            "categoria_id": 1,
+            "nombre": "Concierto Sinfónico",
+            "descripcion": "Presentación especial de la orquesta sinfónica",
+            "lugar": "Teatro Nacional Sucre",
+            "fecha": "2026-12-20T19:00:00-05:00",
+            "imagen_url": "https://cdn.example.com/sinfonico.png",
+        }
+        r_ok = self.client.post("/api/eventos", headers=headers, json=base_ev)
+        self.assertEqual(r_ok.status_code, 201)
+        self.assertEqual(r_ok.get_json()["row_version"], 1)
+
+        # Invalid URLs
+        for bad_url in ("ftp://cdn.example.com/a.jpg", "not-a-url", "https://", "javascript:alert(1)", "https://a.com/x y.jpg"):
+            r = self.client.post("/api/eventos", headers=headers, json=dict(base_ev, imagen_url=bad_url))
+            self.assertEqual(r.status_code, 400, f"Expected 400 for imagen_url={bad_url!r}")
+
+        # Invalid fechas
+        for bad_fecha in ("not-a-date", "2026-13-45T99:00:00Z", "20261220", 123456):
+            r = self.client.post("/api/eventos", headers=headers, json=dict(base_ev, fecha=bad_fecha))
+            self.assertEqual(r.status_code, 400, f"Expected 400 for fecha={bad_fecha!r}")
+
+        # Invalid descripcion (<5 chars or >1000 chars)
+        for bad_desc in ("Hola", "x" * 1001):
+            r = self.client.post("/api/eventos", headers=headers, json=dict(base_ev, descripcion=bad_desc))
+            self.assertEqual(r.status_code, 400, f"Expected 400 for descripcion len={len(bad_desc)}")
+
+        # Invalid precios
+        for bad_precio in (-1, 1000000, 25.123, "10.999", True, "abc", "NaN", "Infinity"):
+            r = self.client.post(
+                "/api/tipos-entrada",
+                headers=headers,
+                json={"evento_id": self.evento.id, "tipo": "Tribuna", "precio": bad_precio, "stock": 10},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for precio={bad_precio!r}")
+
+        # Invalid stocks
+        for bad_stock in (-1, 1000001, 5.5, True, "10"):
+            r = self.client.post(
+                "/api/tipos-entrada",
+                headers=headers,
+                json={"evento_id": self.evento.id, "tipo": "Tribuna", "precio": 25.50, "stock": bad_stock},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for stock={bad_stock!r}")
+
+        # Valid boundary values
+        r_te_ok = self.client.post(
+            "/api/tipos-entrada",
+            headers=headers,
+            json={"evento_id": self.evento.id, "tipo": "Tribuna", "precio": 999999.99, "stock": 1000000},
+        )
+        self.assertEqual(r_te_ok.status_code, 201)
+        self.assertEqual(r_te_ok.get_json()["row_version"], 1)
 
 
 if __name__ == "__main__":

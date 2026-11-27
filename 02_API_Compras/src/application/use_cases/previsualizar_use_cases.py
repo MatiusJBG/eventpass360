@@ -1,17 +1,35 @@
 """Caso de uso de previsualización (cotización en vivo)."""
+import re
+
 from src.domain.exceptions import ConflictError, ValidationError
 from src.domain.repositories import EventosGateway, PromocionesGateway
 
+MAX_CANTIDAD = 10_000
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002300-\U000023FF"
+    "\U00002B00-\U00002BFF\uFE00-\uFE0F\u200D\u20E3\U0001F1E6-\U0001F1FF]"
+)
+_DIGITS_RE = re.compile(r"^[0-9]+$")
 
-def _parse_positive_int(value, field_name: str) -> int:
+
+def _parse_positive_int(value, field_name: str, max_value: int | None = None) -> int:
     if isinstance(value, (bool, float)) or value is None:
         raise ValidationError(f"{field_name} debe ser un entero positivo")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, str):
+        if _EMOJI_RE.search(value):
+            raise ValidationError(f"No se permiten emojis en el campo '{field_name}'")
+        s = value.strip()
+        if not _DIGITS_RE.fullmatch(s):
+            raise ValidationError(f"{field_name} debe ser un entero positivo")
+        parsed = int(s)
+    elif isinstance(value, int):
+        parsed = value
+    else:
         raise ValidationError(f"{field_name} debe ser un entero positivo")
     if parsed <= 0:
         raise ValidationError(f"{field_name} debe ser mayor a 0")
+    if max_value is not None and parsed > max_value:
+        raise ValidationError(f"{field_name} no puede superar {max_value}")
     return parsed
 
 
@@ -23,8 +41,11 @@ def normalize_items(items) -> list[dict]:
         if not isinstance(it, dict):
             raise ValidationError("Cada item debe ser un objeto")
         tid = _parse_positive_int(it.get("tipo_entrada_id"), "tipo_entrada_id")
-        cantidad = _parse_positive_int(it.get("cantidad"), "cantidad")
-        aggregated[tid] = aggregated.get(tid, 0) + cantidad
+        cantidad = _parse_positive_int(it.get("cantidad"), "cantidad", max_value=MAX_CANTIDAD)
+        new_qty = aggregated.get(tid, 0) + cantidad
+        if new_qty > MAX_CANTIDAD:
+            raise ValidationError(f"cantidad acumulada no puede superar {MAX_CANTIDAD}")
+        aggregated[tid] = new_qty
     return [{"tipo_entrada_id": tid, "cantidad": qty} for tid, qty in aggregated.items()]
 
 

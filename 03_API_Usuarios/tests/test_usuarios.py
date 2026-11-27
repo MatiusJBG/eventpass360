@@ -8,8 +8,13 @@ from app import create_app
 from src.config.container import Container
 from src.config.settings import Settings
 from src.domain.entities import Rol, Usuario
+from src.domain.exceptions import ConflictError
 from src.domain.repositories import PasswordHasher, RolRepository, UsuarioRepository
 from src.infrastructure.security.bcrypt_hasher import BcryptPasswordHasher
+
+OCC_CONFLICT_MSG = (
+    "Conflicto de concurrencia: el registro fue modificado por otro usuario. Recarga e intenta nuevamente."
+)
 
 
 class FakePasswordHasher(PasswordHasher):
@@ -47,12 +52,15 @@ class FakeRolRepository(RolRepository):
         self._next_id += 1
         return rol
 
-    def update_rol(self, rol_id: int, nombre=None, estado=None) -> Rol:
+    def update_rol(self, rol_id: int, nombre=None, estado=None, expected_version=None) -> Rol:
         cur = self._roles[rol_id]
+        if expected_version is not None and cur.row_version != expected_version:
+            raise ConflictError(OCC_CONFLICT_MSG)
         updated = Rol(
             id=cur.id,
             nombre=nombre if nombre is not None else cur.nombre,
             estado=estado if estado is not None else cur.estado,
+            row_version=cur.row_version + 1,
         )
         self._roles[rol_id] = updated
         return updated
@@ -81,6 +89,7 @@ class FakeUsuarioRepository(UsuarioRepository):
             estado=row["estado"],
             creado_en=row["creado_en"],
             rol_nombre=rol.nombre if rol else None,
+            row_version=row["row_version"],
         )
 
     def find_by_id(self, usuario_id: int):
@@ -121,18 +130,23 @@ class FakeUsuarioRepository(UsuarioRepository):
             "password_hash": password_hash,
             "estado": True,
             "creado_en": datetime.now(timezone.utc),
+            "row_version": 1,
         }
         return self._to_entity(self._users[uid])
 
-    def update_usuario(self, usuario_id: int, **fields) -> Usuario:
+    def update_usuario(self, usuario_id: int, expected_version=None, **fields) -> Usuario:
         row = self._users[usuario_id]
+        if expected_version is not None and row["row_version"] != expected_version:
+            raise ConflictError(OCC_CONFLICT_MSG)
         for k in ("nombre", "correo", "rol_id", "password_hash", "estado"):
             if k in fields and fields[k] is not None:
                 row[k] = fields[k]
+        row["row_version"] += 1
         return self._to_entity(row)
 
     def deactivate_usuario(self, usuario_id: int) -> None:
         self._users[usuario_id]["estado"] = False
+        self._users[usuario_id]["row_version"] += 1
 
     def delete_usuario(self, usuario_id: int) -> None:
         self._users.pop(usuario_id, None)
@@ -310,6 +324,134 @@ class UsuariosApiTestCase(unittest.TestCase):
         self.assertTrue(hasher.verify("claveSegura123", hashed))
         self.assertFalse(hasher.verify("otraClave", hashed))
         self.assertFalse(hasher.verify("claveSegura123", "not-a-valid-hash"))
+
+    # --- Optimistic Concurrency Control (row_version) ---
+    def test_occ_perfil_update_increments_version_and_rejects_stale_409(self):
+        headers = self._auth_header(self.cliente.id, "CLIENTE")
+        r_get = self.client.get("/api/perfil", headers=headers)
+        self.assertEqual(r_get.status_code, 200)
+        self.assertEqual(r_get.get_json()["row_version"], 1)
+
+        r_ok = self.client.put("/api/perfil", headers=headers, json={"nombre": "Cliente Uno", "row_version": 1})
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertEqual(r_ok.get_json()["row_version"], 2)
+
+        r_stale = self.client.put("/api/perfil", headers=headers, json={"nombre": "Cliente Dos", "row_version": 1})
+        self.assertEqual(r_stale.status_code, 409)
+        self.assertIn("Conflicto de concurrencia", r_stale.get_json()["message"])
+
+        for bad_ver in (0, -1, True, False, 1.5, "1", "🔥"):
+            r_bad = self.client.put("/api/perfil", headers=headers, json={"nombre": "Cliente Dos", "row_version": bad_ver})
+            self.assertEqual(r_bad.status_code, 400, f"Expected 400 for row_version={bad_ver!r}")
+
+    def test_occ_usuario_and_rol_update_reject_stale_409(self):
+        headers = self._auth_header(self.admin.id, "ADMIN")
+
+        r_u1 = self.client.put(
+            f"/api/usuarios/{self.cliente.id}",
+            headers=headers,
+            json={"nombre": "Cliente Editado", "row_version": 1},
+        )
+        self.assertEqual(r_u1.status_code, 200)
+        self.assertEqual(r_u1.get_json()["row_version"], 2)
+
+        r_u_stale = self.client.put(
+            f"/api/usuarios/{self.cliente.id}",
+            headers=headers,
+            json={"nombre": "Cliente Stale", "row_version": 1},
+        )
+        self.assertEqual(r_u_stale.status_code, 409)
+
+        r_r1 = self.client.put("/api/roles/2", headers=headers, json={"nombre": "CLIENTE_PRO", "row_version": 1})
+        self.assertEqual(r_r1.status_code, 200)
+        self.assertEqual(r_r1.get_json()["row_version"], 2)
+
+        r_r_stale = self.client.put("/api/roles/2", headers=headers, json={"nombre": "OTRO", "row_version": 1})
+        self.assertEqual(r_r_stale.status_code, 409)
+
+        r_r_bad = self.client.put("/api/roles/2", headers=headers, json={"nombre": "OTRO", "row_version": True})
+        self.assertEqual(r_r_bad.status_code, 400)
+
+    # --- Strict No-Emoji & Field-by-Field Validation ---
+    def test_emoji_rejected_400_on_all_user_and_role_fields(self):
+        admin_h = self._auth_header(self.admin.id, "ADMIN")
+        cli_h = self._auth_header(self.cliente.id, "CLIENTE")
+
+        for payload in (
+            {"nombre": "Ana 😀", "correo": "a1@test.com", "password": "secret123"},
+            {"nombre": "Ana", "correo": "ana🔥@test.com", "password": "secret123"},
+            {"nombre": "Ana", "correo": "a2@test.com", "password": "secret123🎉"},
+        ):
+            r = self.client.post("/api/registro", json=payload)
+            self.assertEqual(r.status_code, 400)
+            self.assertIn("No se permiten emojis", r.get_json()["message"])
+
+        self.assertEqual(
+            self.client.post("/api/login", json={"correo": "admin😎@test.com", "password": "admin123"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post("/api/login", json={"correo": "admin@test.com", "password": "admin123❤️"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.put("/api/perfil", headers=cli_h, json={"nombre": "María 🇪🇨"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/usuarios",
+                headers=admin_h,
+                json={"rol_id": 2, "nombre": "Pedro ⭐", "correo": "p@test.com", "password": "password123"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(self.client.get("/api/usuarios?q=Admin🔥", headers=admin_h).status_code, 400)
+        self.assertEqual(self.client.post("/api/roles", headers=admin_h, json={"nombre": "VIP 🎟️"}).status_code, 400)
+        self.assertEqual(self.client.put("/api/roles/2", headers=admin_h, json={"nombre": "MOD 🚀"}).status_code, 400)
+
+    def test_strict_field_validation_nombre_correo_password_rol(self):
+        admin_h = self._auth_header(self.admin.id, "ADMIN")
+
+        # Invalid nombre: digits, brackets/HTML, too short, too long
+        for bad_nombre in ("A", "Juan123", "<script>", "Ana[1]", "Pepe{x}", "A" * 121):
+            r = self.client.post(
+                "/api/registro",
+                json={"nombre": bad_nombre, "correo": "valid@test.com", "password": "password123"},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for nombre={bad_nombre!r}")
+
+        # Valid nombre with accents, apostrophe, hyphen, dot
+        r_good_name = self.client.post(
+            "/api/registro",
+            json={"nombre": "Dr. María O'Connor-Pérez", "correo": "maria.oc@test.com", "password": "password123"},
+        )
+        self.assertEqual(r_good_name.status_code, 201)
+
+        # Invalid emails
+        for bad_email in ("no-at.com", "user@localhost", "user@.com", "a b@test.com", f"{'a' * 145}@test.com"):
+            r = self.client.post(
+                "/api/registro",
+                json={"nombre": "Ana Maria", "correo": bad_email, "password": "password123"},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for correo={bad_email!r}")
+
+        # Invalid passwords (<6 or >72)
+        for bad_pw in ("12345", "a" * 73):
+            r = self.client.post(
+                "/api/registro",
+                json={"nombre": "Ana Maria", "correo": "pwtest@test.com", "password": bad_pw},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for password len={len(bad_pw)}")
+
+        # Invalid role names
+        for bad_rol in ("A", "A" * 51, "ADMIN!", "<ROL>", "ROL@1"):
+            r = self.client.post("/api/roles", headers=admin_h, json={"nombre": bad_rol})
+            self.assertEqual(r.status_code, 400, f"Expected 400 for rol={bad_rol!r}")
+
+        r_ok_rol = self.client.post("/api/roles", headers=admin_h, json={"nombre": "SUPER_ADMIN-2"})
+        self.assertEqual(r_ok_rol.status_code, 201)
+        self.assertEqual(r_ok_rol.get_json()["row_version"], 1)
 
 
 if __name__ == "__main__":

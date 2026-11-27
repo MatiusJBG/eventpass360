@@ -1,32 +1,14 @@
 """Casos de uso de tipos de entrada."""
-from decimal import Decimal, InvalidOperation
+from typing import Optional
 
 from src.domain.exceptions import ConflictError, NotFoundError, ValidationError
 from src.domain.repositories import EventoRepository, TipoEntradaRepository
-
-
-def _parse_decimal(value, field="precio") -> Decimal:
-    if isinstance(value, bool) or value is None:
-        raise ValidationError(f"{field} inválido")
-    try:
-        d = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
-        raise ValidationError(f"{field} inválido")
-    if not d.is_finite() or d < 0:
-        raise ValidationError(f"{field} no puede ser negativo")
-    return d
-
-
-def _validate_positive_int(value, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValidationError(f"{field} debe ser un entero positivo")
-    return value
-
-
-def _validate_non_negative_int(value, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValidationError(f"{field} debe ser un entero mayor o igual a 0")
-    return value
+from src.domain.validators import (
+    validate_positive_int,
+    validate_precio,
+    validate_stock,
+    validate_tipo_entrada_tipo,
+)
 
 
 class ListarTiposEntradaUseCase:
@@ -35,7 +17,7 @@ class ListarTiposEntradaUseCase:
 
     def execute(self, evento_id=None):
         if evento_id is not None:
-            evento_id = _validate_positive_int(evento_id, "evento_id")
+            evento_id = validate_positive_int(evento_id, "evento_id")
         return self.repo.list(evento_id=evento_id)
 
 
@@ -45,16 +27,15 @@ class CrearTipoEntradaUseCase:
         self.evento_repo = evento_repo
 
     def execute(self, evento_id, tipo, precio, stock):
-        evento_id_valid = _validate_positive_int(evento_id, "evento_id")
-        if not isinstance(tipo, str) or not tipo.strip():
-            raise ValidationError("El tipo es obligatorio")
-        tipo_norm = tipo.strip()
+        evento_id_valid = validate_positive_int(evento_id, "evento_id")
+        tipo_norm = validate_tipo_entrada_tipo(tipo)
+        precio_valid = validate_precio(precio, "precio")
+        stock_valid = 0 if stock is None else validate_stock(stock, "stock")
         if self.evento_repo.find_by_id(evento_id_valid) is None:
             raise NotFoundError("Evento no existe")
         if self.repo.find_by_evento_tipo(evento_id_valid, tipo_norm) is not None:
             raise ConflictError("Ya existe ese tipo de entrada para el evento")
-        stock_valid = 0 if stock is None else _validate_non_negative_int(stock, "stock")
-        return self.repo.create(evento_id_valid, tipo_norm, _parse_decimal(precio), stock_valid)
+        return self.repo.create(evento_id_valid, tipo_norm, precio_valid, stock_valid)
 
 
 class ActualizarTipoEntradaUseCase:
@@ -62,30 +43,37 @@ class ActualizarTipoEntradaUseCase:
         self.repo = repo
         self.evento_repo = evento_repo
 
-    def execute(self, tipo_id, tipo=None, precio=None, stock=None, estado=None):
+    def execute(
+        self,
+        tipo_id,
+        tipo=None,
+        precio=None,
+        stock=None,
+        estado=None,
+        row_version: Optional[int] = None,
+    ):
         actual = self.repo.find_by_id(tipo_id)
         if actual is None:
             raise NotFoundError("Tipo de entrada no existe")
+        expected_version = validate_positive_int(row_version, "row_version") if row_version is not None else None
         fields = {}
         if tipo is not None:
-            if not isinstance(tipo, str) or not tipo.strip():
-                raise ValidationError("El tipo no puede estar vacío")
-            nuevo_tipo = tipo.strip()
+            nuevo_tipo = validate_tipo_entrada_tipo(tipo)
             existing = self.repo.find_by_evento_tipo(actual.evento_id, nuevo_tipo)
             if existing is not None and existing.id != tipo_id:
                 raise ConflictError("Ya existe ese tipo de entrada para el evento")
             fields["tipo"] = nuevo_tipo
         if precio is not None:
-            fields["precio"] = _parse_decimal(precio)
+            fields["precio"] = validate_precio(precio, "precio")
         if stock is not None:
-            fields["stock"] = _validate_non_negative_int(stock, "stock")
+            fields["stock"] = validate_stock(stock, "stock")
         if estado is not None:
             if not isinstance(estado, bool):
                 raise ValidationError("estado debe ser booleano")
             fields["estado"] = estado
         if not fields:
             raise ValidationError("Nada que actualizar")
-        return self.repo.update(tipo_id, **fields)
+        return self.repo.update(tipo_id, expected_version=expected_version, **fields)
 
 
 class EliminarTipoEntradaUseCase:

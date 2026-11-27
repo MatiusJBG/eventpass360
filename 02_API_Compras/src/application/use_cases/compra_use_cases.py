@@ -1,5 +1,6 @@
 """Casos de uso de compras (orquestación SAGA)."""
 import logging
+import re
 
 from src.application.use_cases.previsualizar_use_cases import normalize_items
 from src.domain.exceptions import (
@@ -17,6 +18,11 @@ from src.domain.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002300-\U000023FF"
+    "\U00002B00-\U00002BFF\uFE00-\uFE0F\u200D\u20E3\U0001F1E6-\U0001F1FF]"
+)
+_SOLICITUD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
 
 class CrearCompraUseCase:
@@ -48,7 +54,11 @@ class CrearCompraUseCase:
         normalized = normalize_items(items)
         if not isinstance(solicitud_id, str) or not solicitud_id.strip():
             raise ValidationError("solicitud_id es obligatorio")
+        if _EMOJI_RE.search(solicitud_id):
+            raise ValidationError("No se permiten emojis en el campo 'solicitud_id'")
         solicitud_id = solicitud_id.strip()
+        if not _SOLICITUD_ID_RE.fullmatch(solicitud_id):
+            raise ValidationError("solicitud_id debe tener entre 1 y 100 caracteres alfanuméricos, '-' o '_'")
 
         # 1. Idempotencia: mismo solicitud_id -> misma compra, sin repetir efectos.
         existing = self.repo.find_by_solicitud_id(solicitud_id)
@@ -161,7 +171,10 @@ class AnularCompraUseCase:
         self.eventos_gw = eventos_gw
         self.facturacion_gw = facturacion_gw
 
-    def execute(self, compra_id: int, auth_header: str = ""):
+    def execute(self, compra_id: int, auth_header: str = "", expected_version: int | None = None):
+        if expected_version is not None:
+            if isinstance(expected_version, (bool, float)) or not isinstance(expected_version, int) or expected_version < 1:
+                raise ValidationError("row_version debe ser un entero positivo")
         compra = self.repo.find_by_id(compra_id)
         if compra is None:
             raise NotFoundError("Compra no existe")
@@ -169,9 +182,19 @@ class AnularCompraUseCase:
             raise ConflictError("La compra ya se encuentra anulada")
         if compra.estado != "CONFIRMADA":
             raise ConflictError("Solo se pueden anular compras confirmadas")
+        if expected_version is not None and compra.row_version != expected_version:
+            raise ConflictError(
+                "Conflicto de concurrencia: la compra fue modificada por otro usuario. Recarga e intenta nuevamente."
+            )
 
         # Transición atómica CONFIRMADA -> ANULADA para evitar doble anulación concurrente.
-        if not self.repo.transition_estado(compra_id, from_estado="CONFIRMADA", to_estado="ANULADA"):
+        if not self.repo.transition_estado(
+            compra_id, from_estado="CONFIRMADA", to_estado="ANULADA", expected_version=expected_version
+        ):
+            if expected_version is not None:
+                raise ConflictError(
+                    "Conflicto de concurrencia: la compra fue modificada o cambió de estado. Recarga e intenta nuevamente."
+                )
             raise ConflictError("La compra ya se encuentra anulada o cambió de estado")
 
         # Restaurar stock (compensación) y anular factura sin silenciar fallos.

@@ -11,6 +11,7 @@ class Promocion:
     cantidad_max: Optional[int]
     porcentaje: Decimal
     estado: bool
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -19,4 +20,5 @@ class Promocion:
             "cantidad_max": self.cantidad_max,
             "porcentaje": float(self.porcentaje),
             "estado": self.estado,
+            "row_version": self.row_version,
         }

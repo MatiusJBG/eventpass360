@@ -80,7 +80,11 @@ class _UsuariosCatalog extends StatelessWidget {
       entityLabel: 'Usuario',
       serverSearch: true,
       fields: [
-        const CrudField('nombre', 'Nombre completo'),
+        const CrudField(
+          'nombre',
+          'Nombre completo',
+          type: FieldType.personName,
+        ),
         const CrudField('correo', 'Correo electrónico', type: FieldType.email),
         const CrudField(
           'password',
@@ -112,6 +116,7 @@ class _UsuariosCatalog extends StatelessWidget {
                   'nombre': u.nombre,
                   'correo': u.correo,
                   'rol_id': u.rolId,
+                  'row_version': u.rowVersion,
                 },
               ),
             )
@@ -135,7 +140,13 @@ class _RolesCatalog extends StatelessWidget {
       title: 'Roles',
       entityLabel: 'Rol',
       fields: const [
-        CrudField('nombre', 'Nombre del rol'),
+        CrudField(
+          'nombre',
+          'Nombre del rol',
+          type: FieldType.roleName,
+          minLength: 2,
+          maxLength: 50,
+        ),
       ],
       load: (_) async {
         final roles = await deps.usuarios.listarRoles();
@@ -146,7 +157,10 @@ class _RolesCatalog extends StatelessWidget {
                 title: r.nombre,
                 subtitle: 'ID #${r.id}',
                 estado: r.estado,
-                values: {'nombre': r.nombre},
+                values: {
+                  'nombre': r.nombre,
+                  'row_version': r.rowVersion,
+                },
               ),
             )
             .toList();
@@ -169,8 +183,21 @@ class _CategoriasCatalog extends StatelessWidget {
       title: 'Categorías',
       entityLabel: 'Categoría',
       fields: const [
-        CrudField('nombre', 'Nombre'),
-        CrudField('descripcion', 'Descripción', required: false),
+        CrudField(
+          'nombre',
+          'Nombre',
+          type: FieldType.text,
+          minLength: 2,
+          maxLength: 100,
+        ),
+        CrudField(
+          'descripcion',
+          'Descripción',
+          type: FieldType.multiline,
+          required: false,
+          minLength: 0,
+          maxLength: 500,
+        ),
       ],
       load: (_) async {
         final cats = await deps.eventos.listarCategorias();
@@ -184,6 +211,7 @@ class _CategoriasCatalog extends StatelessWidget {
                 values: {
                   'nombre': c.nombre,
                   'descripcion': c.descripcion,
+                  'row_version': c.rowVersion,
                 },
               ),
             )
@@ -216,16 +244,39 @@ class _EventosCatalog extends StatelessWidget {
             return cats.map((c) => CrudOption(c.id, c.nombre)).toList();
           },
         ),
-        const CrudField('nombre', 'Nombre del evento'),
-        const CrudField('descripcion', 'Descripción', required: false),
-        const CrudField('lugar', 'Lugar'),
+        const CrudField(
+          'nombre',
+          'Nombre del evento',
+          type: FieldType.text,
+          minLength: 2,
+          maxLength: 150,
+        ),
+        const CrudField(
+          'descripcion',
+          'Descripción',
+          type: FieldType.multiline,
+          minLength: 5,
+          maxLength: 1000,
+        ),
+        const CrudField(
+          'lugar',
+          'Lugar',
+          type: FieldType.text,
+          minLength: 2,
+          maxLength: 200,
+        ),
         const CrudField(
           'fecha',
           'Fecha y hora (ISO 8601)',
-          type: FieldType.isoDate,
-          helperText: 'Ejemplo: 2026-12-20T20:00:00',
+          type: FieldType.dateTime,
+          helperText: 'Ejemplo: 2026-12-20T20:00:00 (o usa el calendario)',
         ),
-        const CrudField('imagen_url', 'URL de imagen', required: false),
+        const CrudField(
+          'imagen_url',
+          'URL de imagen',
+          type: FieldType.url,
+          helperText: 'Debe iniciar con http:// o https://',
+        ),
       ],
       load: (_) async {
         final eventos =
@@ -245,6 +296,7 @@ class _EventosCatalog extends StatelessWidget {
                   'lugar': e.lugar,
                   'fecha': e.fecha,
                   'imagen_url': e.imagenUrl,
+                  'row_version': e.rowVersion,
                 },
               ),
             )
@@ -278,19 +330,27 @@ class _TiposEntradaCatalog extends StatelessWidget {
             return eventos.map((e) => CrudOption(e.id, e.nombre)).toList();
           },
         ),
-        const CrudField('tipo', 'Nombre del tipo (ej. VIP, General)'),
+        const CrudField(
+          'tipo',
+          'Nombre del tipo (ej. VIP, General)',
+          type: FieldType.text,
+          minLength: 2,
+          maxLength: 100,
+        ),
         const CrudField(
           'precio',
           'Precio (USD)',
           type: FieldType.decimal,
-          min: 0.01,
-          helperText: 'Acepta decimales, ej. 45.50',
+          min: 0,
+          max: 999999.99,
+          helperText: 'Acepta decimales (máx. 2), ej. 45.50',
         ),
         const CrudField(
           'stock',
           'Stock disponible',
           type: FieldType.integer,
           min: 0,
+          max: 1000000,
         ),
       ],
       load: (_) async {
@@ -308,6 +368,7 @@ class _TiposEntradaCatalog extends StatelessWidget {
                   'tipo': t.tipo,
                   'precio': t.precio,
                   'stock': t.stock,
+                  'row_version': t.rowVersion,
                 },
               ),
             )
@@ -336,6 +397,7 @@ class _PromocionesCatalog extends StatelessWidget {
           'Cantidad mínima',
           type: FieldType.integer,
           min: 1,
+          max: 1000000,
         ),
         CrudField(
           'cantidad_max',
@@ -343,6 +405,7 @@ class _PromocionesCatalog extends StatelessWidget {
           type: FieldType.optionalInteger,
           required: false,
           min: 1,
+          max: 1000000,
           helperText: 'Déjalo vacío para "Sin límite"',
         ),
         CrudField(
@@ -351,7 +414,7 @@ class _PromocionesCatalog extends StatelessWidget {
           type: FieldType.decimal,
           min: 0,
           max: 100,
-          helperText: 'Valor entre 0 y 100 (acepta decimales)',
+          helperText: 'Valor entre 0 y 100 (máx. 2 decimales)',
         ),
       ],
       crossFieldValidator: (payload) {
@@ -377,6 +440,7 @@ class _PromocionesCatalog extends StatelessWidget {
                   'cantidad_min': p.cantidadMin,
                   'cantidad_max': p.cantidadMax,
                   'porcentaje': p.porcentaje,
+                  'row_version': p.rowVersion,
                 },
               ),
             )

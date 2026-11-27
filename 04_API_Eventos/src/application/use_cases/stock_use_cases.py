@@ -1,6 +1,7 @@
 """Casos de uso de cotización y descuento/restauración atómica de stock."""
 from src.domain.exceptions import ValidationError
 from src.domain.repositories import StockRepository
+from src.domain.validators import validate_positive_int
 
 
 def _normalize_items(items) -> list[dict]:
@@ -10,12 +11,8 @@ def _normalize_items(items) -> list[dict]:
     for it in items:
         if not isinstance(it, dict):
             raise ValidationError("Cada item debe ser un objeto con tipo_entrada_id y cantidad")
-        tid = it.get("tipo_entrada_id")
-        cantidad = it.get("cantidad")
-        if isinstance(tid, bool) or not isinstance(tid, int) or tid <= 0:
-            raise ValidationError("tipo_entrada_id debe ser un entero positivo")
-        if isinstance(cantidad, bool) or not isinstance(cantidad, int) or cantidad <= 0:
-            raise ValidationError("cantidad debe ser un entero positivo")
+        tid = validate_positive_int(it.get("tipo_entrada_id"), "tipo_entrada_id")
+        cantidad = validate_positive_int(it.get("cantidad"), "cantidad")
         aggregated[tid] = aggregated.get(tid, 0) + cantidad
     return [{"tipo_entrada_id": tid, "cantidad": cant} for tid, cant in aggregated.items()]
 

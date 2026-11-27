@@ -7,6 +7,7 @@ import '../../app.dart';
 import '../../core/app_dependencies.dart';
 import '../../core/format.dart';
 import '../../core/theme.dart';
+import '../../core/validators.dart';
 import '../../domain/entities.dart';
 import '../../domain/ui_state.dart';
 import '../core/widgets/feedback_views.dart';
@@ -108,6 +109,7 @@ class _CatalogoScreenState extends State<CatalogoScreen> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
             child: TextField(
               controller: _searchController,
+              inputFormatters: [AppInputFormatters.noEmoji],
               decoration: InputDecoration(
                 hintText: 'Buscar evento por nombre o lugar...',
                 prefixIcon: const Icon(Icons.search),

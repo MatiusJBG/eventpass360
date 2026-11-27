@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_dependencies.dart';
 import '../../core/session.dart';
 import '../../core/theme.dart';
+import '../../core/validators.dart';
 import '../core/widgets/feedback_views.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -33,29 +34,12 @@ class _AuthScreenState extends State<AuthScreen> {
 
   String? _validateNombre(String? value) {
     if (_isLogin) return null;
-    if (value == null || value.trim().isEmpty) {
-      return 'Ingresa tu nombre completo';
-    }
-    if (value.trim().length < 2) {
-      return 'El nombre debe tener al menos 2 caracteres';
-    }
-    return null;
+    return AppValidators.personName(value);
   }
 
-  String? _validateCorreo(String? value) {
-    final v = value?.trim() ?? '';
-    if (v.isEmpty) return 'Ingresa tu correo electrónico';
-    final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-    if (!emailRegex.hasMatch(v)) return 'Ingresa un correo válido';
-    return null;
-  }
+  String? _validateCorreo(String? value) => AppValidators.email(value);
 
-  String? _validatePassword(String? value) {
-    final v = value ?? '';
-    if (v.isEmpty) return 'Ingresa tu contraseña';
-    if (v.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
-    return null;
-  }
+  String? _validatePassword(String? value) => AppValidators.password(value);
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -125,6 +109,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       if (!_isLogin) ...[
                         TextFormField(
                           controller: _nombre,
+                          inputFormatters: [AppInputFormatters.noEmoji],
                           decoration: const InputDecoration(
                             labelText: 'Nombre completo',
                             prefixIcon: Icon(Icons.person_outline),
@@ -136,6 +121,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       ],
                       TextFormField(
                         controller: _correo,
+                        inputFormatters: AppInputFormatters.noSpacesNoEmoji,
                         decoration: const InputDecoration(
                           labelText: 'Correo electrónico',
                           prefixIcon: Icon(Icons.email_outlined),
@@ -147,6 +133,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 14),
                       TextFormField(
                         controller: _password,
+                        inputFormatters: [AppInputFormatters.noEmoji],
                         decoration: InputDecoration(
                           labelText: 'Contraseña',
                           prefixIcon: const Icon(Icons.lock_outline),

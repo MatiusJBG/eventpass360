@@ -37,7 +37,8 @@ String mapHttpErrorMessage(int statusCode, [String? serverMessage]) {
     401 => 'Sesión expirada o credenciales inválidas. Inicia sesión nuevamente.',
     403 => 'No tienes permisos para realizar esta acción.',
     404 => 'El recurso solicitado no fue encontrado.',
-    409 => 'Conflicto: stock insuficiente, registro duplicado o ya anulado.',
+    409 =>
+      'Conflicto de concurrencia o estado: el registro fue modificado por otro usuario, stock insuficiente, duplicado o ya anulado.',
     503 =>
       'Servicio temporalmente no disponible. La operación fue revertida de forma segura.',
     >= 500 => 'Ocurrió un problema interno en el servidor. Inténtalo de nuevo.',

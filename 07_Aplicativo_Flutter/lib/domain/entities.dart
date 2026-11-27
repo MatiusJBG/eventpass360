@@ -9,6 +9,7 @@ class Usuario {
   final String nombre;
   final String correo;
   final bool estado;
+  final int rowVersion;
 
   const Usuario({
     required this.id,
@@ -17,6 +18,7 @@ class Usuario {
     required this.nombre,
     required this.correo,
     required this.estado,
+    this.rowVersion = 1,
   });
 }
 
@@ -24,11 +26,13 @@ class Rol {
   final int id;
   final String nombre;
   final bool estado;
+  final int rowVersion;
 
   const Rol({
     required this.id,
     required this.nombre,
     required this.estado,
+    this.rowVersion = 1,
   });
 }
 
@@ -37,12 +41,14 @@ class Categoria {
   final String nombre;
   final String descripcion;
   final bool estado;
+  final int rowVersion;
 
   const Categoria({
     required this.id,
     required this.nombre,
     required this.descripcion,
     required this.estado,
+    this.rowVersion = 1,
   });
 }
 
@@ -56,6 +62,7 @@ class Evento {
   final String imagenUrl;
   final bool estado;
   final String categoria;
+  final int rowVersion;
 
   const Evento({
     required this.id,
@@ -67,6 +74,7 @@ class Evento {
     required this.imagenUrl,
     required this.estado,
     required this.categoria,
+    this.rowVersion = 1,
   });
 }
 
@@ -78,6 +86,7 @@ class TipoEntrada {
   final int stock;
   final bool estado;
   final String evento;
+  final int rowVersion;
 
   const TipoEntrada({
     required this.id,
@@ -87,6 +96,7 @@ class TipoEntrada {
     required this.stock,
     required this.estado,
     required this.evento,
+    this.rowVersion = 1,
   });
 }
 
@@ -96,6 +106,7 @@ class Promocion {
   final int? cantidadMax;
   final double porcentaje;
   final bool estado;
+  final int rowVersion;
 
   const Promocion({
     required this.id,
@@ -103,6 +114,7 @@ class Promocion {
     this.cantidadMax,
     required this.porcentaje,
     required this.estado,
+    this.rowVersion = 1,
   });
 
   bool aplicaPara(int cantidad) {
@@ -137,6 +149,7 @@ class Factura {
   final String numero;
   final String fecha;
   final String estado;
+  final int rowVersion;
 
   const Factura({
     required this.id,
@@ -144,6 +157,7 @@ class Factura {
     required this.numero,
     required this.fecha,
     required this.estado,
+    this.rowVersion = 1,
   });
 }
 
@@ -164,6 +178,7 @@ class Compra {
   final String? facturaNumero;
   final String? facturaEstado;
   final List<DetalleCompra> detalles;
+  final int rowVersion;
 
   const Compra({
     required this.id,
@@ -182,6 +197,7 @@ class Compra {
     this.facturaNumero,
     this.facturaEstado,
     required this.detalles,
+    this.rowVersion = 1,
   });
 }
 

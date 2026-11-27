@@ -18,7 +18,8 @@ DROP SEQUENCE IF EXISTS factura_numero_seq CASCADE;
 CREATE TABLE roles (
     id          SERIAL PRIMARY KEY,
     nombre      VARCHAR(50) UNIQUE NOT NULL,
-    estado      BOOLEAN NOT NULL DEFAULT TRUE
+    estado      BOOLEAN NOT NULL DEFAULT TRUE,
+    row_version INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 
 -- 2. usuarios
@@ -29,7 +30,8 @@ CREATE TABLE usuarios (
     correo        VARCHAR(150) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     estado        BOOLEAN NOT NULL DEFAULT TRUE,
-    creado_en     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    creado_en     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    row_version   INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 CREATE INDEX idx_usuarios_rol_id ON usuarios(rol_id);
 
@@ -38,7 +40,8 @@ CREATE TABLE categorias (
     id          SERIAL PRIMARY KEY,
     nombre      VARCHAR(100) UNIQUE NOT NULL,
     descripcion TEXT NOT NULL DEFAULT '',
-    estado      BOOLEAN NOT NULL DEFAULT TRUE
+    estado      BOOLEAN NOT NULL DEFAULT TRUE,
+    row_version INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 
 -- 4. eventos
@@ -50,18 +53,20 @@ CREATE TABLE eventos (
     lugar        VARCHAR(200) NOT NULL,
     fecha        TIMESTAMPTZ NOT NULL,
     imagen_url   TEXT NOT NULL,
-    estado       BOOLEAN NOT NULL DEFAULT TRUE
+    estado       BOOLEAN NOT NULL DEFAULT TRUE,
+    row_version  INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 CREATE INDEX idx_eventos_categoria_id ON eventos(categoria_id);
 
 -- 5. tipos_entrada
 CREATE TABLE tipos_entrada (
-    id       SERIAL PRIMARY KEY,
-    evento_id INT NOT NULL REFERENCES eventos(id) ON DELETE RESTRICT,
-    tipo     VARCHAR(80) NOT NULL,
-    precio   NUMERIC(10,2) NOT NULL CHECK (precio >= 0),
-    stock    INT NOT NULL CHECK (stock >= 0),
-    estado   BOOLEAN NOT NULL DEFAULT TRUE,
+    id          SERIAL PRIMARY KEY,
+    evento_id   INT NOT NULL REFERENCES eventos(id) ON DELETE RESTRICT,
+    tipo        VARCHAR(80) NOT NULL,
+    precio      NUMERIC(10,2) NOT NULL CHECK (precio >= 0),
+    stock       INT NOT NULL CHECK (stock >= 0),
+    estado      BOOLEAN NOT NULL DEFAULT TRUE,
+    row_version INT NOT NULL DEFAULT 1 CHECK (row_version >= 1),
     UNIQUE(evento_id, tipo)
 );
 CREATE INDEX idx_tipos_entrada_evento_id ON tipos_entrada(evento_id);
@@ -72,7 +77,8 @@ CREATE TABLE promociones (
     cantidad_min INT NOT NULL CHECK (cantidad_min >= 1),
     cantidad_max INT NULL CHECK (cantidad_max IS NULL OR cantidad_max >= cantidad_min),
     porcentaje   NUMERIC(5,2) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
-    estado       BOOLEAN NOT NULL DEFAULT TRUE
+    estado       BOOLEAN NOT NULL DEFAULT TRUE,
+    row_version  INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 
 -- 7. compras
@@ -87,7 +93,8 @@ CREATE TABLE compras (
     iva            NUMERIC(10,2) NOT NULL,
     total          NUMERIC(10,2) NOT NULL,
     estado         VARCHAR(20) NOT NULL DEFAULT 'CONFIRMADA'
-                   CHECK (estado IN ('PENDIENTE','CONFIRMADA','ANULADA','FALLIDA'))
+                   CHECK (estado IN ('PENDIENTE','CONFIRMADA','ANULADA','FALLIDA')),
+    row_version    INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 CREATE INDEX idx_compras_usuario_id ON compras(usuario_id);
 
@@ -105,14 +112,15 @@ CREATE INDEX idx_detalle_compra_tipo_entrada_id ON detalle_compra(tipo_entrada_i
 
 -- 9. facturas
 CREATE TABLE facturas (
-    id         SERIAL PRIMARY KEY,
-    compra_id  INT UNIQUE NOT NULL REFERENCES compras(id) ON DELETE RESTRICT,
-    numero     VARCHAR(25) UNIQUE NOT NULL,
-    fecha      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    xml        TEXT NOT NULL,
-    pdf_base64 TEXT NOT NULL,
-    estado     VARCHAR(20) NOT NULL DEFAULT 'EMITIDA'
-               CHECK (estado IN ('EMITIDA','ANULADA'))
+    id          SERIAL PRIMARY KEY,
+    compra_id   INT UNIQUE NOT NULL REFERENCES compras(id) ON DELETE RESTRICT,
+    numero      VARCHAR(25) UNIQUE NOT NULL,
+    fecha       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    xml         TEXT NOT NULL,
+    pdf_base64  TEXT NOT NULL,
+    estado      VARCHAR(20) NOT NULL DEFAULT 'EMITIDA'
+                CHECK (estado IN ('EMITIDA','ANULADA')),
+    row_version INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
 );
 
 -- Secuencia para numeración inmutable FAC-000001

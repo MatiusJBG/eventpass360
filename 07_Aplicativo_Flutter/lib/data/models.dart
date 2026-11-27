@@ -40,6 +40,7 @@ class UsuarioModel extends Usuario {
     required super.nombre,
     required super.correo,
     required super.estado,
+    super.rowVersion = 1,
   });
 
   factory UsuarioModel.fromJson(Map<String, dynamic> json) => UsuarioModel(
@@ -49,6 +50,7 @@ class UsuarioModel extends Usuario {
         nombre: json['nombre']?.toString() ?? '',
         correo: json['correo']?.toString() ?? '',
         estado: _asBool(json['estado'], true),
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   factory UsuarioModel.fromEntity(Usuario e) => UsuarioModel(
@@ -58,6 +60,7 @@ class UsuarioModel extends Usuario {
         nombre: e.nombre,
         correo: e.correo,
         estado: e.estado,
+        rowVersion: e.rowVersion,
       );
 
   Map<String, dynamic> toJson() => {
@@ -67,6 +70,7 @@ class UsuarioModel extends Usuario {
         'nombre': nombre,
         'correo': correo,
         'estado': estado,
+        'row_version': rowVersion,
       };
 }
 
@@ -75,18 +79,21 @@ class RolModel extends Rol {
     required super.id,
     required super.nombre,
     required super.estado,
+    super.rowVersion = 1,
   });
 
   factory RolModel.fromJson(Map<String, dynamic> json) => RolModel(
         id: _asInt(json['id']),
         nombre: json['nombre']?.toString() ?? '',
         estado: _asBool(json['estado'], true),
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'nombre': nombre,
         'estado': estado,
+        'row_version': rowVersion,
       };
 }
 
@@ -96,6 +103,7 @@ class CategoriaModel extends Categoria {
     required super.nombre,
     required super.descripcion,
     required super.estado,
+    super.rowVersion = 1,
   });
 
   factory CategoriaModel.fromJson(Map<String, dynamic> json) => CategoriaModel(
@@ -103,6 +111,7 @@ class CategoriaModel extends Categoria {
         nombre: json['nombre']?.toString() ?? '',
         descripcion: json['descripcion']?.toString() ?? '',
         estado: _asBool(json['estado'], true),
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
@@ -110,6 +119,7 @@ class CategoriaModel extends Categoria {
         'nombre': nombre,
         'descripcion': descripcion,
         'estado': estado,
+        'row_version': rowVersion,
       };
 }
 
@@ -124,6 +134,7 @@ class EventoModel extends Evento {
     required super.imagenUrl,
     required super.estado,
     required super.categoria,
+    super.rowVersion = 1,
   });
 
   factory EventoModel.fromJson(Map<String, dynamic> json) => EventoModel(
@@ -136,6 +147,7 @@ class EventoModel extends Evento {
         imagenUrl: json['imagen_url']?.toString() ?? '',
         estado: _asBool(json['estado'], true),
         categoria: json['categoria']?.toString() ?? '',
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
@@ -148,6 +160,7 @@ class EventoModel extends Evento {
         'imagen_url': imagenUrl,
         'estado': estado,
         'categoria': categoria,
+        'row_version': rowVersion,
       };
 }
 
@@ -160,6 +173,7 @@ class TipoEntradaModel extends TipoEntrada {
     required super.stock,
     required super.estado,
     required super.evento,
+    super.rowVersion = 1,
   });
 
   factory TipoEntradaModel.fromJson(Map<String, dynamic> json) =>
@@ -171,6 +185,7 @@ class TipoEntradaModel extends TipoEntrada {
         stock: _asInt(json['stock']),
         estado: _asBool(json['estado'], true),
         evento: json['evento']?.toString() ?? '',
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
@@ -181,6 +196,7 @@ class TipoEntradaModel extends TipoEntrada {
         'stock': stock,
         'estado': estado,
         'evento': evento,
+        'row_version': rowVersion,
       };
 }
 
@@ -191,6 +207,7 @@ class PromocionModel extends Promocion {
     super.cantidadMax,
     required super.porcentaje,
     required super.estado,
+    super.rowVersion = 1,
   });
 
   factory PromocionModel.fromJson(Map<String, dynamic> json) => PromocionModel(
@@ -199,6 +216,7 @@ class PromocionModel extends Promocion {
         cantidadMax: _asNullableInt(json['cantidad_max']),
         porcentaje: _asDouble(json['porcentaje']),
         estado: _asBool(json['estado'], true),
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
@@ -207,6 +225,7 @@ class PromocionModel extends Promocion {
         'cantidad_max': cantidadMax,
         'porcentaje': porcentaje,
         'estado': estado,
+        'row_version': rowVersion,
       };
 }
 
@@ -256,6 +275,7 @@ class FacturaModel extends Factura {
     required super.numero,
     required super.fecha,
     required super.estado,
+    super.rowVersion = 1,
   });
 
   factory FacturaModel.fromJson(Map<String, dynamic> json) => FacturaModel(
@@ -264,6 +284,7 @@ class FacturaModel extends Factura {
         numero: json['numero']?.toString() ?? '',
         fecha: json['fecha']?.toString() ?? '',
         estado: json['estado']?.toString() ?? '',
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toJson() => {
@@ -272,6 +293,7 @@ class FacturaModel extends Factura {
         'numero': numero,
         'fecha': fecha,
         'estado': estado,
+        'row_version': rowVersion,
       };
 }
 
@@ -293,6 +315,7 @@ class CompraModel extends Compra {
     super.facturaNumero,
     super.facturaEstado,
     required super.detalles,
+    super.rowVersion = 1,
   });
 
   factory CompraModel.fromJson(Map<String, dynamic> json) {
@@ -326,6 +349,7 @@ class CompraModel extends Compra {
       facturaEstado:
           (facturaMap?['estado'] ?? json['factura_estado'])?.toString(),
       detalles: detallesList,
+      rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
     );
   }
 
@@ -348,6 +372,7 @@ class CompraModel extends Compra {
         'detalles': detalles
             .map((d) => DetalleCompraModel.fromEntity(d).toJson())
             .toList(),
+        'row_version': rowVersion,
       };
 }
 

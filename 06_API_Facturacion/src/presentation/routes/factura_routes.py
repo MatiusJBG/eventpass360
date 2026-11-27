@@ -5,6 +5,7 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 
 from src.presentation.middlewares.auth_guard import require_auth
 from src.presentation.schemas.validators import (
+    parse_anular_factura_payload,
     parse_emitir_factura_payload,
     parse_optional_positive_int,
 )
@@ -57,5 +58,8 @@ def pdf(factura_id):
 @factura_bp.patch("/factura/<int:factura_id>/anular")
 @require_auth
 def anular(factura_id):
-    factura = _c().anular_factura.execute(factura_id, usuario=g.current_user)
+    expected_version = parse_anular_factura_payload(request.get_json(silent=True))
+    factura = _c().anular_factura.execute(
+        factura_id, usuario=g.current_user, expected_version=expected_version
+    )
     return jsonify(factura.to_dict()), 200

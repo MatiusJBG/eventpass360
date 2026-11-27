@@ -9,9 +9,15 @@ class Rol:
     id: int
     nombre: str
     estado: bool
+    row_version: int = 1
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "nombre": self.nombre, "estado": self.estado}
+        return {
+            "id": self.id,
+            "nombre": self.nombre,
+            "estado": self.estado,
+            "row_version": self.row_version,
+        }
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,7 @@ class Usuario:
     estado: bool
     creado_en: datetime
     rol_nombre: Optional[str] = None
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -33,4 +40,5 @@ class Usuario:
             "correo": self.correo,
             "estado": self.estado,
             "creado_en": self.creado_en.isoformat() if self.creado_en else None,
+            "row_version": self.row_version,
         }

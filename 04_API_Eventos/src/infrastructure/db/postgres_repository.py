@@ -8,6 +8,10 @@ from src.domain.repositories import (
 )
 from src.infrastructure.db.connection import get_connection
 
+OCC_CONFLICT_MSG = (
+    "Conflicto de concurrencia: el registro fue modificado por otro usuario. Recarga e intenta nuevamente."
+)
+
 
 class PostgresCategoriaRepository(CategoriaRepository):
     def __init__(self, database_url: str):
@@ -18,29 +22,46 @@ class PostgresCategoriaRepository(CategoriaRepository):
 
     @staticmethod
     def _row(row) -> Categoria:
-        return Categoria(id=row["id"], nombre=row["nombre"], descripcion=row["descripcion"], estado=row["estado"])
+        return Categoria(
+            id=row["id"],
+            nombre=row["nombre"],
+            descripcion=row["descripcion"],
+            estado=row["estado"],
+            row_version=row["row_version"],
+        )
 
     def list(self):
         with self._conn() as conn:
-            rows = conn.execute("SELECT id, nombre, descripcion, estado FROM categorias ORDER BY id").fetchall()
+            rows = conn.execute(
+                "SELECT id, nombre, descripcion, estado, row_version FROM categorias ORDER BY id"
+            ).fetchall()
         return [self._row(r) for r in rows]
 
     def find_by_id(self, categoria_id):
         with self._conn() as conn:
-            row = conn.execute("SELECT id, nombre, descripcion, estado FROM categorias WHERE id = %s", (categoria_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id, nombre, descripcion, estado, row_version FROM categorias WHERE id = %s",
+                (categoria_id,),
+            ).fetchone()
         return self._row(row) if row else None
 
     def find_by_nombre(self, nombre):
         with self._conn() as conn:
-            row = conn.execute("SELECT id, nombre, descripcion, estado FROM categorias WHERE nombre = %s", (nombre,)).fetchone()
+            row = conn.execute(
+                "SELECT id, nombre, descripcion, estado, row_version FROM categorias WHERE nombre = %s",
+                (nombre,),
+            ).fetchone()
         return self._row(row) if row else None
 
     def create(self, nombre, descripcion):
         with self._conn() as conn:
-            row = conn.execute("INSERT INTO categorias (nombre, descripcion) VALUES (%s, %s) RETURNING id", (nombre, descripcion)).fetchone()
+            row = conn.execute(
+                "INSERT INTO categorias (nombre, descripcion) VALUES (%s, %s) RETURNING id",
+                (nombre, descripcion),
+            ).fetchone()
         return self.find_by_id(row["id"])
 
-    def update(self, categoria_id, nombre=None, descripcion=None, estado=None):
+    def update(self, categoria_id, nombre=None, descripcion=None, estado=None, expected_version=None):
         sets, params = [], []
         if nombre is not None:
             sets.append("nombre = %s")
@@ -52,9 +73,19 @@ class PostgresCategoriaRepository(CategoriaRepository):
             sets.append("estado = %s")
             params.append(estado)
         if sets:
-            params.append(categoria_id)
+            sets.append("row_version = row_version + 1")
+            if expected_version is not None:
+                params.extend([categoria_id, expected_version])
+                sql = f"UPDATE categorias SET {', '.join(sets)} WHERE id = %s AND row_version = %s RETURNING id"
+            else:
+                params.append(categoria_id)
+                sql = f"UPDATE categorias SET {', '.join(sets)} WHERE id = %s RETURNING id"
             with self._conn() as conn:
-                conn.execute(f"UPDATE categorias SET {', '.join(sets)} WHERE id = %s", tuple(params))
+                updated = conn.execute(sql, tuple(params)).fetchone()
+                if updated is None and expected_version is not None:
+                    exists = conn.execute("SELECT 1 FROM categorias WHERE id = %s", (categoria_id,)).fetchone()
+                    if exists is not None:
+                        raise ConflictError(OCC_CONFLICT_MSG)
         return self.find_by_id(categoria_id)
 
     def count_eventos(self, categoria_id):
@@ -68,7 +99,10 @@ class PostgresCategoriaRepository(CategoriaRepository):
 
     def deactivate(self, categoria_id):
         with self._conn() as conn:
-            conn.execute("UPDATE categorias SET estado = FALSE WHERE id = %s", (categoria_id,))
+            conn.execute(
+                "UPDATE categorias SET estado = FALSE, row_version = row_version + 1 WHERE id = %s",
+                (categoria_id,),
+            )
 
 
 class PostgresEventoRepository(EventoRepository):
@@ -81,14 +115,21 @@ class PostgresEventoRepository(EventoRepository):
     @staticmethod
     def _row(row) -> Evento:
         return Evento(
-            id=row["id"], categoria_id=row["categoria_id"], nombre=row["nombre"],
-            descripcion=row["descripcion"], lugar=row["lugar"], fecha=row["fecha"],
-            imagen_url=row["imagen_url"], estado=row["estado"], categoria_nombre=row.get("categoria_nombre"),
+            id=row["id"],
+            categoria_id=row["categoria_id"],
+            nombre=row["nombre"],
+            descripcion=row["descripcion"],
+            lugar=row["lugar"],
+            fecha=row["fecha"],
+            imagen_url=row["imagen_url"],
+            estado=row["estado"],
+            categoria_nombre=row.get("categoria_nombre"),
+            row_version=row["row_version"],
         )
 
     def list(self, q=None, categoria_id=None, incluir_inactivos=False):
-        sql = """SELECT e.id, e.categoria_id, e.nombre, e.descripcion, e.lugar, e.fecha, e.imagen_url, e.estado,
-                        c.nombre AS categoria_nombre
+        sql = """SELECT e.id, e.categoria_id, e.nombre, e.descripcion, e.lugar, e.fecha, e.imagen_url,
+                        e.estado, e.row_version, c.nombre AS categoria_nombre
                  FROM eventos e JOIN categorias c ON c.id = e.categoria_id"""
         where, params = [], []
         if q:
@@ -109,8 +150,8 @@ class PostgresEventoRepository(EventoRepository):
     def find_by_id(self, evento_id):
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT e.id, e.categoria_id, e.nombre, e.descripcion, e.lugar, e.fecha, e.imagen_url, e.estado,
-                          c.nombre AS categoria_nombre
+                """SELECT e.id, e.categoria_id, e.nombre, e.descripcion, e.lugar, e.fecha, e.imagen_url,
+                          e.estado, e.row_version, c.nombre AS categoria_nombre
                    FROM eventos e JOIN categorias c ON c.id = e.categoria_id WHERE e.id = %s""",
                 (evento_id,),
             ).fetchone()
@@ -124,18 +165,35 @@ class PostgresEventoRepository(EventoRepository):
             ).fetchone()
         return self.find_by_id(row["id"])
 
-    def update(self, evento_id, **fields):
-        allowed = {"categoria_id": "categoria_id", "nombre": "nombre", "descripcion": "descripcion",
-                   "lugar": "lugar", "fecha": "fecha", "imagen_url": "imagen_url", "estado": "estado"}
+    def update(self, evento_id, expected_version=None, **fields):
+        allowed = {
+            "categoria_id": "categoria_id",
+            "nombre": "nombre",
+            "descripcion": "descripcion",
+            "lugar": "lugar",
+            "fecha": "fecha",
+            "imagen_url": "imagen_url",
+            "estado": "estado",
+        }
         sets, params = [], []
         for key, column in allowed.items():
             if key in fields and fields[key] is not None:
                 sets.append(f"{column} = %s")
                 params.append(fields[key])
         if sets:
-            params.append(evento_id)
+            sets.append("row_version = row_version + 1")
+            if expected_version is not None:
+                params.extend([evento_id, expected_version])
+                sql = f"UPDATE eventos SET {', '.join(sets)} WHERE id = %s AND row_version = %s RETURNING id"
+            else:
+                params.append(evento_id)
+                sql = f"UPDATE eventos SET {', '.join(sets)} WHERE id = %s RETURNING id"
             with self._conn() as conn:
-                conn.execute(f"UPDATE eventos SET {', '.join(sets)} WHERE id = %s", tuple(params))
+                updated = conn.execute(sql, tuple(params)).fetchone()
+                if updated is None and expected_version is not None:
+                    exists = conn.execute("SELECT 1 FROM eventos WHERE id = %s", (evento_id,)).fetchone()
+                    if exists is not None:
+                        raise ConflictError(OCC_CONFLICT_MSG)
         return self.find_by_id(evento_id)
 
     def delete(self, evento_id):
@@ -148,7 +206,10 @@ class PostgresEventoRepository(EventoRepository):
 
     def deactivate(self, evento_id):
         with self._conn() as conn:
-            conn.execute("UPDATE eventos SET estado = FALSE WHERE id = %s", (evento_id,))
+            conn.execute(
+                "UPDATE eventos SET estado = FALSE, row_version = row_version + 1 WHERE id = %s",
+                (evento_id,),
+            )
 
 
 class PostgresTipoEntradaRepository(TipoEntradaRepository):
@@ -161,12 +222,19 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
     @staticmethod
     def _row(row) -> TipoEntrada:
         return TipoEntrada(
-            id=row["id"], evento_id=row["evento_id"], tipo=row["tipo"], precio=row["precio"],
-            stock=row["stock"], estado=row["estado"], evento_nombre=row.get("evento_nombre"),
+            id=row["id"],
+            evento_id=row["evento_id"],
+            tipo=row["tipo"],
+            precio=row["precio"],
+            stock=row["stock"],
+            estado=row["estado"],
+            evento_nombre=row.get("evento_nombre"),
+            row_version=row["row_version"],
         )
 
     def list(self, evento_id=None):
-        sql = """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, e.nombre AS evento_nombre
+        sql = """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, t.row_version,
+                        e.nombre AS evento_nombre
                  FROM tipos_entrada t JOIN eventos e ON e.id = t.evento_id"""
         params = ()
         if evento_id is not None:
@@ -180,7 +248,8 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
     def find_by_id(self, tipo_id):
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, e.nombre AS evento_nombre
+                """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, t.row_version,
+                          e.nombre AS evento_nombre
                    FROM tipos_entrada t JOIN eventos e ON e.id = t.evento_id WHERE t.id = %s""",
                 (tipo_id,),
             ).fetchone()
@@ -189,8 +258,10 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
     def find_by_evento_tipo(self, evento_id, tipo):
         with self._conn() as conn:
             row = conn.execute(
-                """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, e.nombre AS evento_nombre
-                   FROM tipos_entrada t JOIN eventos e ON e.id = t.evento_id WHERE t.evento_id = %s AND t.tipo = %s""",
+                """SELECT t.id, t.evento_id, t.tipo, t.precio, t.stock, t.estado, t.row_version,
+                          e.nombre AS evento_nombre
+                   FROM tipos_entrada t JOIN eventos e ON e.id = t.evento_id
+                   WHERE t.evento_id = %s AND t.tipo = %s""",
                 (evento_id, tipo),
             ).fetchone()
         return self._row(row) if row else None
@@ -203,7 +274,7 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
             ).fetchone()
         return self.find_by_id(row["id"])
 
-    def update(self, tipo_id, **fields):
+    def update(self, tipo_id, expected_version=None, **fields):
         allowed = {"tipo": "tipo", "precio": "precio", "stock": "stock", "estado": "estado"}
         sets, params = [], []
         for key, column in allowed.items():
@@ -211,9 +282,19 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
                 sets.append(f"{column} = %s")
                 params.append(fields[key])
         if sets:
-            params.append(tipo_id)
+            sets.append("row_version = row_version + 1")
+            if expected_version is not None:
+                params.extend([tipo_id, expected_version])
+                sql = f"UPDATE tipos_entrada SET {', '.join(sets)} WHERE id = %s AND row_version = %s RETURNING id"
+            else:
+                params.append(tipo_id)
+                sql = f"UPDATE tipos_entrada SET {', '.join(sets)} WHERE id = %s RETURNING id"
             with self._conn() as conn:
-                conn.execute(f"UPDATE tipos_entrada SET {', '.join(sets)} WHERE id = %s", tuple(params))
+                updated = conn.execute(sql, tuple(params)).fetchone()
+                if updated is None and expected_version is not None:
+                    exists = conn.execute("SELECT 1 FROM tipos_entrada WHERE id = %s", (tipo_id,)).fetchone()
+                    if exists is not None:
+                        raise ConflictError(OCC_CONFLICT_MSG)
         return self.find_by_id(tipo_id)
 
     def delete(self, tipo_id):
@@ -222,11 +303,16 @@ class PostgresTipoEntradaRepository(TipoEntradaRepository):
 
     def deactivate(self, tipo_id):
         with self._conn() as conn:
-            conn.execute("UPDATE tipos_entrada SET estado = FALSE WHERE id = %s", (tipo_id,))
+            conn.execute(
+                "UPDATE tipos_entrada SET estado = FALSE, row_version = row_version + 1 WHERE id = %s",
+                (tipo_id,),
+            )
 
     def count_detalles(self, tipo_id):
         with self._conn() as conn:
-            row = conn.execute("SELECT count(*) AS n FROM detalle_compra WHERE tipo_entrada_id = %s", (tipo_id,)).fetchone()
+            row = conn.execute(
+                "SELECT count(*) AS n FROM detalle_compra WHERE tipo_entrada_id = %s", (tipo_id,)
+            ).fetchone()
         return row["n"]
 
 
@@ -278,33 +364,55 @@ class PostgresStockRepository(StockRepository):
         return {"items": result_items, "subtotal_total": float(subtotal_total)}
 
     def descontar(self, items):
-        items = self._aggregate(items)
-        # Transacción atómica: verifica stock, tipo activo y evento activo.
+        items = sorted(self._aggregate(items), key=lambda x: x["tipo_entrada_id"])
+        # Bloqueo pesimista ordenado (anti-deadlock) + verificación OCC por row_version.
         with get_connection(self.database_url) as conn:
             with conn.transaction():
                 for it in items:
+                    row = conn.execute(
+                        """SELECT te.id, te.stock, te.row_version, te.estado, e.estado AS evento_estado
+                           FROM tipos_entrada te
+                           JOIN eventos e ON e.id = te.evento_id
+                           WHERE te.id = %s
+                           FOR UPDATE""",
+                        (it["tipo_entrada_id"],),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or not row["estado"]
+                        or not row["evento_estado"]
+                        or row["stock"] < it["cantidad"]
+                    ):
+                        raise ConflictError("Stock insuficiente o tipo de entrada no disponible")
                     cur = conn.execute(
                         """UPDATE tipos_entrada
-                           SET stock = stock - %s
-                           WHERE id = %s
-                             AND estado = TRUE
-                             AND stock >= %s
-                             AND EXISTS (
-                                 SELECT 1 FROM eventos e
-                                 WHERE e.id = tipos_entrada.evento_id
-                                   AND e.estado = TRUE
-                             )""",
-                        (it["cantidad"], it["tipo_entrada_id"], it["cantidad"]),
+                           SET stock = stock - %s, row_version = row_version + 1
+                           WHERE id = %s AND row_version = %s AND stock >= %s""",
+                        (it["cantidad"], it["tipo_entrada_id"], row["row_version"], it["cantidad"]),
                     )
                     if cur.rowcount == 0:
-                        raise ConflictError("Stock insuficiente o tipo de entrada no disponible")
+                        raise ConflictError(OCC_CONFLICT_MSG)
 
     def restaurar(self, items):
-        items = self._aggregate(items)
+        items = sorted(self._aggregate(items), key=lambda x: x["tipo_entrada_id"])
         with get_connection(self.database_url) as conn:
             with conn.transaction():
                 for it in items:
-                    conn.execute(
-                        "UPDATE tipos_entrada SET stock = stock + %s WHERE id = %s",
-                        (it["cantidad"], it["tipo_entrada_id"]),
+                    row = conn.execute(
+                        """SELECT te.id, te.stock, te.row_version, te.estado, e.estado AS evento_estado
+                           FROM tipos_entrada te
+                           JOIN eventos e ON e.id = te.evento_id
+                           WHERE te.id = %s
+                           FOR UPDATE""",
+                        (it["tipo_entrada_id"],),
+                    ).fetchone()
+                    if row is None:
+                        raise ConflictError("Tipo de entrada no encontrado para restaurar stock")
+                    cur = conn.execute(
+                        """UPDATE tipos_entrada
+                           SET stock = stock + %s, row_version = row_version + 1
+                           WHERE id = %s AND row_version = %s""",
+                        (it["cantidad"], it["tipo_entrada_id"], row["row_version"]),
                     )
+                    if cur.rowcount == 0:
+                        raise ConflictError(OCC_CONFLICT_MSG)

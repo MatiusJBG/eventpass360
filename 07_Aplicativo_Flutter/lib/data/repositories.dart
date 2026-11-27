@@ -52,11 +52,13 @@ class UsuariosRepository implements UsuariosRepositoryPort {
     String? nombre,
     String? correo,
     String? password,
+    int? rowVersion,
   }) async {
     final body = <String, dynamic>{};
     if (nombre != null && nombre.isNotEmpty) body['nombre'] = nombre;
     if (correo != null && correo.isNotEmpty) body['correo'] = correo;
     if (password != null && password.isNotEmpty) body['password'] = password;
+    if (rowVersion != null) body['row_version'] = rowVersion;
     final raw = await client.put('${AppConfig.apiUsuarios}/api/perfil', body);
     return UsuarioModel.fromJson(_asMap(raw));
   }
@@ -297,9 +299,12 @@ class ComprasRepository implements ComprasRepositoryPort {
   }
 
   @override
-  Future<Compra> anularCompra(int id) async {
-    final raw =
-        await client.patch('${AppConfig.apiCompras}/api/compras/$id/anular');
+  Future<Compra> anularCompra(int id, {int? rowVersion}) async {
+    final body = rowVersion != null ? {'row_version': rowVersion} : null;
+    final raw = await client.patch(
+      '${AppConfig.apiCompras}/api/compras/$id/anular',
+      body,
+    );
     return CompraModel.fromJson(_asMap(raw));
   }
 }

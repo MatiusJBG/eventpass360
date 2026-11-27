@@ -20,6 +20,7 @@ abstract interface class UsuariosRepositoryPort {
     String? nombre,
     String? correo,
     String? password,
+    int? rowVersion,
   });
 
   Future<List<Usuario>> listarUsuarios([String? q]);
@@ -75,5 +76,5 @@ abstract interface class ComprasRepositoryPort {
   Future<Compra> comprar(String solicitudId, List<Map<String, dynamic>> items);
   Future<List<Compra>> listarCompras();
   Future<Estadisticas> estadisticas();
-  Future<Compra> anularCompra(int id);
+  Future<Compra> anularCompra(int id, {int? rowVersion});
 }

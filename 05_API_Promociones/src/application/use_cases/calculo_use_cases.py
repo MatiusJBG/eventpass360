@@ -1,23 +1,49 @@
 """Cálculo dinámico de descuento e IVA 15% (Decimal ROUND_HALF_UP)."""
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import math
+import re
 
 from src.domain.exceptions import ValidationError
 from src.domain.repositories import PromocionRepository
 
 MONEY = Decimal("0.01")
 IVA_RATE = Decimal("0.15")
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002300-\U000023FF"
+    "\U00002B00-\U00002BFF\uFE00-\uFE0F\u200D\u20E3\U0001F1E6-\U0001F1FF]"
+)
+_DIGITS_RE = re.compile(r"^[0-9]+$")
+_DECIMAL_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
 
 
 def _money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
+def _check_no_emojis(value: str, field_name: str) -> None:
+    if _EMOJI_RE.search(value):
+        raise ValidationError(f"No se permiten emojis en el campo '{field_name}'")
+
+
 def _parse_decimal(value, field_name: str) -> Decimal:
     if isinstance(value, bool) or value is None:
         raise ValidationError(f"{field_name} inválido")
-    try:
+    if isinstance(value, str):
+        _check_no_emojis(value, field_name)
+        s = value.strip()
+        if not _DECIMAL_RE.fullmatch(s):
+            raise ValidationError(f"{field_name} inválido")
+        try:
+            d = Decimal(s)
+        except InvalidOperation:
+            raise ValidationError(f"{field_name} inválido")
+    elif isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            raise ValidationError(f"{field_name} inválido")
         d = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
+    elif isinstance(value, (int, Decimal)):
+        d = Decimal(str(value))
+    else:
         raise ValidationError(f"{field_name} inválido")
     if not d.is_finite():
         raise ValidationError(f"{field_name} inválido")
@@ -27,9 +53,15 @@ def _parse_decimal(value, field_name: str) -> Decimal:
 def _parse_positive_int(value, field_name: str) -> int:
     if isinstance(value, (bool, float)) or value is None:
         raise ValidationError(f"{field_name} inválido")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, str):
+        _check_no_emojis(value, field_name)
+        s = value.strip()
+        if not _DIGITS_RE.fullmatch(s):
+            raise ValidationError(f"{field_name} inválido")
+        parsed = int(s)
+    elif isinstance(value, int):
+        parsed = value
+    else:
         raise ValidationError(f"{field_name} inválido")
     if parsed < 1:
         raise ValidationError(f"{field_name} debe ser >= 1")

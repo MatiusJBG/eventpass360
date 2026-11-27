@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 import unittest
+from unittest.mock import MagicMock, patch
 
 import jwt
 
@@ -100,13 +101,16 @@ class InMemoryCompraRepo(CompraRepository):
             id=c.id, usuario_id=c.usuario_id, solicitud_id=c.solicitud_id, fecha=c.fecha,
             subtotal=c.subtotal, descuento=c.descuento, base_imponible=c.base_imponible,
             iva=c.iva, total=c.total, estado=estado, detalles=c.detalles,
+            row_version=c.row_version + 1,
         )
 
-    def transition_estado(self, compra_id, from_estado, to_estado):
+    def transition_estado(self, compra_id, from_estado, to_estado, expected_version=None):
         if self.fail_transition:
             return False
         c = self._compras.get(compra_id)
         if c is None or c.estado != from_estado:
+            return False
+        if expected_version is not None and c.row_version != expected_version:
             return False
         self.update_estado(compra_id, to_estado)
         return True
@@ -369,6 +373,98 @@ class ComprasSagaTestCase(unittest.TestCase):
         self.repo.fail_transition = True
         with self.assertRaises(ConflictError):
             self.anular_uc.execute(c2_id)
+
+    def test_anular_row_version_occ_conflict_and_success(self):
+        h2 = self._headers(2)
+        c_resp = self.client.post(
+            "/api/compras",
+            headers=h2,
+            json={"solicitud_id": "sol-occ-1", "items": [{"tipo_entrada_id": 1, "cantidad": 2}]},
+        )
+        self.assertEqual(c_resp.status_code, 201)
+        body = c_resp.get_json()
+        cid = body["id"]
+        rv = body["row_version"]
+        self.assertGreaterEqual(rv, 1)
+
+        # Stale row_version -> 409 Conflict
+        r_stale = self.client.patch(
+            f"/api/compras/{cid}/anular",
+            headers=h2,
+            json={"row_version": rv + 99},
+        )
+        self.assertEqual(r_stale.status_code, 409)
+
+        # Invalid row_version -> 400
+        for bad_rv in (True, 0, -1, 1.5, "1🔥", "abc"):
+            r_bad = self.client.patch(
+                f"/api/compras/{cid}/anular",
+                headers=h2,
+                json={"row_version": bad_rv},
+            )
+            self.assertEqual(r_bad.status_code, 400, f"Expected 400 for row_version={bad_rv}")
+
+        # Exact row_version -> 200 and increments row_version
+        r_ok = self.client.patch(
+            f"/api/compras/{cid}/anular",
+            headers=h2,
+            json={"row_version": rv},
+        )
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertEqual(r_ok.get_json()["estado"], "ANULADA")
+        self.assertEqual(r_ok.get_json()["row_version"], rv + 1)
+
+    def test_postgres_transition_estado_sql_with_expected_version(self):
+        from src.infrastructure.db.postgres_repository import PostgresCompraRepository
+
+        pg_repo = PostgresCompraRepository("postgresql://fake")
+        mock_conn = MagicMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_conn
+        mock_ctx.__exit__.return_value = False
+        mock_conn.execute.return_value.fetchone.return_value = {"id": 1}
+
+        with patch("src.infrastructure.db.postgres_repository.get_connection", return_value=mock_ctx):
+            ok = pg_repo.transition_estado(1, "CONFIRMADA", "ANULADA", expected_version=2)
+        self.assertTrue(ok)
+        sql, params = mock_conn.execute.call_args[0]
+        self.assertIn("row_version = row_version + 1", sql)
+        self.assertIn("AND row_version = %s RETURNING id", sql)
+        self.assertEqual(params, ("ANULADA", 1, "CONFIRMADA", 2))
+
+    def test_reject_emojis_and_strict_int_validation_400(self):
+        h2 = self._headers(2)
+        # Emoji and invalid solicitud_id
+        for bad_sol in ("sol-1😀", "🔥ticket", "sol con espacios", "a" * 101, "sol/1"):
+            r = self.client.post(
+                "/api/compras",
+                headers=h2,
+                json={"solicitud_id": bad_sol, "items": [{"tipo_entrada_id": 1, "cantidad": 1}]},
+            )
+            self.assertEqual(r.status_code, 400, f"Expected 400 for solicitud_id={bad_sol!r}")
+
+        # Strict integer validation on items (emojis, letters, floats, bools, >10000)
+        for bad_item in (
+            {"tipo_entrada_id": "1😀", "cantidad": 1},
+            {"tipo_entrada_id": 1, "cantidad": "2🎫"},
+            {"tipo_entrada_id": "abc", "cantidad": 1},
+            {"tipo_entrada_id": 1, "cantidad": 1.5},
+            {"tipo_entrada_id": True, "cantidad": 1},
+            {"tipo_entrada_id": 1, "cantidad": False},
+            {"tipo_entrada_id": 1, "cantidad": 10001},
+        ):
+            r1 = self.client.post(
+                "/api/compras",
+                headers=h2,
+                json={"solicitud_id": "sol-valid-1", "items": [bad_item]},
+            )
+            self.assertEqual(r1.status_code, 400, f"Expected 400 on /compras for {bad_item}")
+            r2 = self.client.post(
+                "/api/compras/previsualizar",
+                headers=h2,
+                json={"items": [bad_item]},
+            )
+            self.assertEqual(r2.status_code, 400, f"Expected 400 on /previsualizar for {bad_item}")
 
 
 if __name__ == "__main__":

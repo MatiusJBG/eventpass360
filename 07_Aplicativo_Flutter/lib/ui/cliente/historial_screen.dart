@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/api_client.dart';
 import '../../core/app_dependencies.dart';
 import '../../core/format.dart';
 import '../../core/theme.dart';
@@ -61,10 +62,19 @@ class HistorialScreenState extends State<HistorialScreen> {
 
     setState(() => _anulandoId = compra.id);
     try {
-      await context.read<AppDependencies>().compras.anularCompra(compra.id);
+      await context.read<AppDependencies>().compras.anularCompra(
+            compra.id,
+            rowVersion: compra.rowVersion,
+          );
       if (!mounted) return;
       showAppSnack(context, 'Compra #${compra.id} anulada y stock restaurado');
       await reload();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, e.toString(), error: true);
+      if (e.statusCode == 409) {
+        await reload();
+      }
     } catch (e) {
       if (mounted) showAppSnack(context, e.toString(), error: true);
     } finally {

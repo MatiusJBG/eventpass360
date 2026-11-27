@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/api_client.dart';
 import '../../core/app_dependencies.dart';
 import '../../core/session.dart';
 import '../../core/theme.dart';
+import '../../core/validators.dart';
 import '../../domain/entities.dart';
 import '../../domain/ui_state.dart';
 import '../core/widgets/feedback_views.dart';
@@ -24,6 +26,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
   final _password = TextEditingController();
 
   UiState<Usuario> _state = const UiLoading();
+  Usuario? _perfil;
   bool _saving = false;
   bool _obscurePassword = true;
 
@@ -44,9 +47,12 @@ class _PerfilScreenState extends State<PerfilScreen> {
   Future<void> _load() async {
     setState(() => _state = const UiLoading());
     final repo = context.read<AppDependencies>().usuarios;
+    final session = context.read<Session>();
     try {
       final usuario = await repo.getPerfil();
       if (!mounted) return;
+      _perfil = usuario;
+      session.updateUser(usuario);
       _nombre.text = usuario.nombre;
       _correo.text = usuario.correo;
       _password.clear();
@@ -66,12 +72,20 @@ class _PerfilScreenState extends State<PerfilScreen> {
         nombre: _nombre.text.trim(),
         correo: _correo.text.trim(),
         password: _password.text.isEmpty ? null : _password.text,
+        rowVersion: _perfil?.rowVersion,
       );
+      _perfil = updated;
       session.updateUser(updated);
       if (!mounted) return;
       _password.clear();
       setState(() => _state = UiSuccess(updated));
       showAppSnack(context, 'Perfil actualizado correctamente');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, e.toString(), error: true);
+      if (e.statusCode == 409) {
+        await _load();
+      }
     } catch (e) {
       if (mounted) showAppSnack(context, e.toString(), error: true);
     } finally {
@@ -149,40 +163,28 @@ class _PerfilScreenState extends State<PerfilScreen> {
                           const SizedBox(height: 22),
                           TextFormField(
                             controller: _nombre,
+                            inputFormatters: [AppInputFormatters.noEmoji],
                             decoration: const InputDecoration(
                               labelText: 'Nombre',
                               prefixIcon: Icon(Icons.person_outline),
                             ),
-                            validator: (v) {
-                              if (v == null || v.trim().isEmpty) {
-                                return 'El nombre es obligatorio';
-                              }
-                              return null;
-                            },
+                            validator: AppValidators.personName,
                           ),
                           const SizedBox(height: 14),
                           TextFormField(
                             controller: _correo,
+                            inputFormatters: AppInputFormatters.noSpacesNoEmoji,
                             decoration: const InputDecoration(
                               labelText: 'Correo electrónico',
                               prefixIcon: Icon(Icons.email_outlined),
                             ),
                             keyboardType: TextInputType.emailAddress,
-                            validator: (v) {
-                              final text = v?.trim() ?? '';
-                              if (text.isEmpty) {
-                                return 'El correo es obligatorio';
-                              }
-                              if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                                  .hasMatch(text)) {
-                                return 'Ingresa un correo válido';
-                              }
-                              return null;
-                            },
+                            validator: AppValidators.email,
                           ),
                           const SizedBox(height: 14),
                           TextFormField(
                             controller: _password,
+                            inputFormatters: [AppInputFormatters.noEmoji],
                             decoration: InputDecoration(
                               labelText: 'Nueva contraseña (opcional)',
                               helperText:
@@ -200,13 +202,8 @@ class _PerfilScreenState extends State<PerfilScreen> {
                               ),
                             ),
                             obscureText: _obscurePassword,
-                            validator: (v) {
-                              if (v == null || v.isEmpty) return null;
-                              if (v.length < 6) {
-                                return 'Mínimo 6 caracteres';
-                              }
-                              return null;
-                            },
+                            validator: (v) =>
+                                AppValidators.password(v, required: false),
                           ),
                           const SizedBox(height: 22),
                           LoadingButton(

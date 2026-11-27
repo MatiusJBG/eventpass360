@@ -1,6 +1,7 @@
 """Pruebas unitarias para API Facturación (:5004)."""
 from datetime import datetime, timezone
 import unittest
+from unittest.mock import MagicMock, patch
 import xml.etree.ElementTree as ET
 
 import jwt
@@ -75,11 +76,20 @@ class InMemoryFacturaRepo(FacturaRepository):
         self._by_compra[compra_id] = fid
         return f
 
-    def anular(self, factura_id):
-        f = self._items[factura_id]
+    def anular(self, factura_id, expected_version=None):
+        f = self._items.get(factura_id)
+        if f is None:
+            return None
+        if f.estado == "ANULADA":
+            raise ConflictError("La factura ya se encuentra anulada")
+        if expected_version is not None and f.row_version != expected_version:
+            raise ConflictError(
+                "Conflicto de concurrencia: la factura fue modificada por otro usuario. Recarga e intenta nuevamente."
+            )
         updated = Factura(
             id=f.id, compra_id=f.compra_id, numero=f.numero, fecha=f.fecha,
             estado="ANULADA", xml=f.xml, pdf_base64=f.pdf_base64, usuario_id=f.usuario_id,
+            row_version=f.row_version + 1,
         )
         self._items[factura_id] = updated
         return updated
@@ -212,8 +222,94 @@ class FacturacionTestCase(unittest.TestCase):
         r_cancel1 = self.client.patch(f"/api/factura/{f1['id']}/anular", headers=self._headers(2, "CLIENTE"))
         self.assertEqual(r_cancel1.status_code, 200)
         self.assertEqual(r_cancel1.get_json()["estado"], "ANULADA")
+        self.assertEqual(r_cancel1.get_json()["row_version"], 2)
         r_cancel2 = self.client.patch(f"/api/factura/{f1['id']}/anular", headers=self._headers(2, "CLIENTE"))
         self.assertEqual(r_cancel2.status_code, 409)
+
+    def test_anular_row_version_occ_conflict_and_postgres_sql(self):
+        from src.infrastructure.db.postgres_repository import PostgresFacturaRepository
+
+        item = [{"descripcion": "General", "cantidad": 1, "precio_unitario": 25.0, "subtotal": 25.0}]
+        tot = {"subtotal": 25.0, "descuento": 0, "base_imponible": 25.0, "iva": 3.75, "total": 28.75}
+        f1 = self.client.post(
+            "/api/factura",
+            headers=self._headers(2, "CLIENTE"),
+            json={"compra_id": 10, "cliente": {"id": 2, "nombre": "U2", "correo": "u2@t.com"}, "items": item, "totales": tot},
+        ).get_json()
+        self.assertEqual(f1["row_version"], 1)
+
+        # Stale row_version -> 409 Conflict
+        r_stale = self.client.patch(
+            f"/api/factura/{f1['id']}/anular",
+            headers=self._headers(2, "CLIENTE"),
+            json={"row_version": 99},
+        )
+        self.assertEqual(r_stale.status_code, 409)
+
+        # Invalid row_version -> 400
+        for bad_rv in (True, 0, -1, 1.5, "1🔥", "abc"):
+            r_bad = self.client.patch(
+                f"/api/factura/{f1['id']}/anular",
+                headers=self._headers(2, "CLIENTE"),
+                json={"row_version": bad_rv},
+            )
+            self.assertEqual(r_bad.status_code, 400, f"Expected 400 for row_version={bad_rv}")
+
+        # Exact row_version -> 200 and increments row_version
+        r_ok = self.client.patch(
+            f"/api/factura/{f1['id']}/anular",
+            headers=self._headers(2, "CLIENTE"),
+            json={"row_version": 1},
+        )
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertEqual(r_ok.get_json()["estado"], "ANULADA")
+        self.assertEqual(r_ok.get_json()["row_version"], 2)
+
+        # Postgres repo atomic UPDATE ... AND row_version = %s RETURNING -> ConflictError on 0 rows
+        pg_repo = PostgresFacturaRepository("postgresql://fake")
+        mock_conn = MagicMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_conn
+        mock_ctx.__exit__.return_value = False
+        mock_conn.execute.return_value.fetchone.side_effect = [
+            None,
+            {
+                "id": 1, "compra_id": 10, "numero": "FAC-000001",
+                "fecha": datetime.now(timezone.utc), "estado": "EMITIDA",
+                "row_version": 2, "usuario_id": 2, "xml": "", "pdf_base64": "",
+            },
+        ]
+        with patch("src.infrastructure.db.postgres_repository.get_connection", return_value=mock_ctx):
+            with self.assertRaises(ConflictError):
+                pg_repo.anular(1, expected_version=1)
+        sql, params = mock_conn.execute.call_args_list[0][0]
+        self.assertIn("row_version = row_version + 1", sql)
+        self.assertIn("WHERE id = %s AND estado = 'EMITIDA' AND row_version = %s RETURNING", sql)
+        self.assertEqual(params, (1, 1))
+
+    def test_reject_emojis_and_invalid_numeric_fields_400(self):
+        headers = self._headers(2, "CLIENTE")
+        base_item = {"descripcion": "General", "cantidad": 1, "precio_unitario": 25.0, "subtotal": 25.0}
+        base_tot = {"subtotal": 25.0, "descuento": 0, "base_imponible": 25.0, "iva": 3.75, "total": 28.75}
+        base_cli = {"id": 2, "nombre": "Ana Perez", "correo": "ana@test.com"}
+
+        bad_payloads = [
+            {"compra_id": 10, "cliente": {**base_cli, "nombre": "Ana 😀"}, "items": [base_item], "totales": base_tot},
+            {"compra_id": 10, "cliente": {**base_cli, "correo": "ana🔥@test.com"}, "items": [base_item], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "descripcion": "VIP 🎫"}], "totales": base_tot},
+            {"compra_id": "10😀", "cliente": base_cli, "items": [base_item], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "cantidad": True}], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "cantidad": 0}], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "cantidad": 1.5}], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "precio_unitario": -1}], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [{**base_item, "subtotal": "abc"}], "totales": base_tot},
+            {"compra_id": 10, "cliente": base_cli, "items": [base_item], "totales": {**base_tot, "total": -5}},
+            {"compra_id": 10, "cliente": base_cli, "items": [base_item], "totales": {**base_tot, "iva": True}},
+            {"compra_id": 10, "cliente": base_cli, "items": [base_item], "totales": {**base_tot, "subtotal": "10💰"}},
+        ]
+        for payload in bad_payloads:
+            resp = self.client.post("/api/factura", headers=headers, json=payload)
+            self.assertEqual(resp.status_code, 400, f"Expected 400 for {payload}")
 
 
 if __name__ == "__main__":

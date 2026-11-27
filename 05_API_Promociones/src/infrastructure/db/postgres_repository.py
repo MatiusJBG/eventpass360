@@ -2,6 +2,7 @@
 from typing import Optional
 
 from src.domain.entities import Promocion
+from src.domain.exceptions import ConflictError
 from src.domain.repositories import PromocionRepository
 from src.infrastructure.db.connection import get_connection
 
@@ -13,12 +14,16 @@ class PostgresPromocionRepository(PromocionRepository):
     @staticmethod
     def _row(row) -> Promocion:
         return Promocion(
-            id=row["id"], cantidad_min=row["cantidad_min"], cantidad_max=row["cantidad_max"],
-            porcentaje=row["porcentaje"], estado=row["estado"],
+            id=row["id"],
+            cantidad_min=row["cantidad_min"],
+            cantidad_max=row["cantidad_max"],
+            porcentaje=row["porcentaje"],
+            estado=row["estado"],
+            row_version=row.get("row_version", 1),
         )
 
     def list_all(self, solo_activas=False):
-        sql = "SELECT id, cantidad_min, cantidad_max, porcentaje, estado FROM promociones"
+        sql = "SELECT id, cantidad_min, cantidad_max, porcentaje, estado, row_version FROM promociones"
         params = ()
         if solo_activas:
             sql += " WHERE estado = TRUE"
@@ -30,7 +35,7 @@ class PostgresPromocionRepository(PromocionRepository):
     def find_by_id(self, promocion_id):
         with get_connection(self.database_url) as conn:
             row = conn.execute(
-                "SELECT id, cantidad_min, cantidad_max, porcentaje, estado FROM promociones WHERE id = %s",
+                "SELECT id, cantidad_min, cantidad_max, porcentaje, estado, row_version FROM promociones WHERE id = %s",
                 (promocion_id,),
             ).fetchone()
         return self._row(row) if row else None
@@ -38,7 +43,7 @@ class PostgresPromocionRepository(PromocionRepository):
     def find_aplicable(self, cantidad_total):
         with get_connection(self.database_url) as conn:
             row = conn.execute(
-                """SELECT id, cantidad_min, cantidad_max, porcentaje, estado FROM promociones
+                """SELECT id, cantidad_min, cantidad_max, porcentaje, estado, row_version FROM promociones
                    WHERE estado = TRUE AND cantidad_min <= %s
                      AND (cantidad_max IS NULL OR cantidad_max >= %s)
                    ORDER BY porcentaje DESC LIMIT 1""",
@@ -66,7 +71,7 @@ class PostgresPromocionRepository(PromocionRepository):
             ).fetchone()
         return self.find_by_id(row["id"])
 
-    def update(self, promocion_id, **fields):
+    def update(self, promocion_id, expected_version: Optional[int] = None, **fields):
         allowed = {"cantidad_min": "cantidad_min", "cantidad_max": "cantidad_max",
                    "porcentaje": "porcentaje", "estado": "estado"}
         sets, params = [], []
@@ -76,11 +81,25 @@ class PostgresPromocionRepository(PromocionRepository):
                     continue
                 sets.append(f"{column} = %s")
                 params.append(fields[key])
-        if sets:
+        if not sets:
+            return self.find_by_id(promocion_id)
+        sets.append("row_version = row_version + 1")
+        returning = "id, cantidad_min, cantidad_max, porcentaje, estado, row_version"
+        if expected_version is not None:
+            sql = f"UPDATE promociones SET {', '.join(sets)} WHERE id = %s AND row_version = %s RETURNING {returning}"
+            params.extend([promocion_id, expected_version])
+        else:
+            sql = f"UPDATE promociones SET {', '.join(sets)} WHERE id = %s RETURNING {returning}"
             params.append(promocion_id)
-            with get_connection(self.database_url) as conn:
-                conn.execute(f"UPDATE promociones SET {', '.join(sets)} WHERE id = %s", tuple(params))
-        return self.find_by_id(promocion_id)
+        with get_connection(self.database_url) as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
+        if row is None:
+            if expected_version is not None and self.find_by_id(promocion_id) is not None:
+                raise ConflictError(
+                    "Conflicto de concurrencia: la promoción fue modificada por otro usuario. Recarga e intenta nuevamente."
+                )
+            return None
+        return self._row(row)
 
     def delete(self, promocion_id):
         with get_connection(self.database_url) as conn:

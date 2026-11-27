@@ -11,9 +11,16 @@ class Categoria:
     nombre: str
     descripcion: str
     estado: bool
+    row_version: int = 1
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "nombre": self.nombre, "descripcion": self.descripcion, "estado": self.estado}
+        return {
+            "id": self.id,
+            "nombre": self.nombre,
+            "descripcion": self.descripcion,
+            "estado": self.estado,
+            "row_version": self.row_version,
+        }
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,7 @@ class Evento:
     imagen_url: str
     estado: bool
     categoria_nombre: Optional[str] = None
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +47,7 @@ class Evento:
             "fecha": self.fecha.isoformat() if self.fecha else None,
             "imagen_url": self.imagen_url,
             "estado": self.estado,
+            "row_version": self.row_version,
         }
 
 
@@ -51,6 +60,7 @@ class TipoEntrada:
     stock: int
     estado: bool
     evento_nombre: Optional[str] = None
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -61,4 +71,5 @@ class TipoEntrada:
             "precio": float(self.precio),
             "stock": self.stock,
             "estado": self.estado,
+            "row_version": self.row_version,
         }

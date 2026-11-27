@@ -14,6 +14,7 @@ class Factura:
     xml: str = ""
     pdf_base64: str = ""
     usuario_id: Optional[int] = None
+    row_version: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -22,4 +23,5 @@ class Factura:
             "numero": self.numero,
             "fecha": self.fecha.isoformat() if self.fecha else None,
             "estado": self.estado,
+            "row_version": self.row_version,
         }

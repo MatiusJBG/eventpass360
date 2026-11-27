@@ -1,20 +1,27 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../core/api_client.dart';
+import '../../core/validators.dart';
 import '../../domain/ui_state.dart';
 import '../core/widgets/feedback_views.dart';
 import '../core/widgets/status_badges.dart';
 
 enum FieldType {
   text,
+  multiline,
+  personName,
+  roleName,
   email,
   password,
+  url,
+  dateTime,
   integer,
-  decimal,
   optionalInteger,
+  decimal,
   dropdown,
-  isoDate,
 }
 
 class CrudOption {
@@ -32,6 +39,8 @@ class CrudField {
   final bool requiredOnCreateOnly;
   final num? min;
   final num? max;
+  final int? minLength;
+  final int? maxLength;
   final String? helperText;
   final Future<List<CrudOption>> Function()? loadOptions;
 
@@ -43,6 +52,8 @@ class CrudField {
     this.requiredOnCreateOnly = false,
     this.min,
     this.max,
+    this.minLength,
+    this.maxLength,
     this.helperText,
     this.loadOptions,
   });
@@ -64,6 +75,23 @@ class CrudRecord {
     required this.values,
     this.extraBadge,
   });
+}
+
+class _CrudDialogResult {
+  final bool saved;
+  final String? conflictMessage;
+
+  const _CrudDialogResult.saved()
+      : saved = true,
+        conflictMessage = null;
+
+  const _CrudDialogResult.cancelled()
+      : saved = false,
+        conflictMessage = null;
+
+  const _CrudDialogResult.conflict(String message)
+      : saved = false,
+        conflictMessage = message;
 }
 
 class AdminCrudPanel extends StatefulWidget {
@@ -158,7 +186,7 @@ class _AdminCrudPanelState extends State<AdminCrudPanel> {
 
     if (!mounted) return;
 
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_CrudDialogResult>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _CrudFormDialog(
@@ -178,13 +206,18 @@ class _AdminCrudPanelState extends State<AdminCrudPanel> {
       ),
     );
 
-    if (saved == true && mounted) {
+    if (!mounted || result == null) return;
+
+    if (result.saved) {
       showAppSnack(
         context,
         existing == null
             ? '${widget.entityLabel} creado correctamente'
             : '${widget.entityLabel} actualizado correctamente',
       );
+      await _load();
+    } else if (result.conflictMessage != null) {
+      showAppSnack(context, result.conflictMessage!, error: true);
       await _load();
     }
   }
@@ -205,6 +238,12 @@ class _AdminCrudPanelState extends State<AdminCrudPanel> {
       if (!mounted) return;
       showAppSnack(context, '${widget.entityLabel} eliminado/desactivado');
       await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, e.toString(), error: true);
+      if (e.statusCode == 409) {
+        await _load();
+      }
     } catch (e) {
       if (mounted) showAppSnack(context, e.toString(), error: true);
     } finally {
@@ -241,6 +280,7 @@ class _AdminCrudPanelState extends State<AdminCrudPanel> {
                 Expanded(
                   child: TextField(
                     controller: _searchCtrl,
+                    inputFormatters: [AppInputFormatters.noEmoji],
                     decoration: InputDecoration(
                       hintText: 'Buscar en ${widget.title.toLowerCase()}...',
                       prefixIcon: const Icon(Icons.search),
@@ -422,6 +462,17 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
 
   bool get _isEdit => widget.existing != null;
 
+  static String _formatDecimalInitial(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is num) {
+      final fixed = raw.toStringAsFixed(2);
+      if (fixed.endsWith('.00')) return fixed.substring(0, fixed.length - 3);
+      if (fixed.endsWith('0')) return fixed.substring(0, fixed.length - 1);
+      return fixed;
+    }
+    return raw.toString();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -436,6 +487,10 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
       } else if (field.type == FieldType.password) {
         _controllers[field.name] = TextEditingController();
         _obscureMap[field.name] = true;
+      } else if (field.type == FieldType.decimal) {
+        _controllers[field.name] = TextEditingController(
+          text: _formatDecimalInitial(raw),
+        );
       } else {
         _controllers[field.name] = TextEditingController(
           text: raw == null ? '' : raw.toString(),
@@ -465,8 +520,7 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
           final text = _controllers[field.name]!.text.trim();
           payload[field.name] = text.isEmpty ? null : int.tryParse(text);
         case FieldType.decimal:
-          final text =
-              _controllers[field.name]!.text.trim().replaceAll(',', '.');
+          final text = _controllers[field.name]!.text.trim();
           payload[field.name] = double.tryParse(text);
         case FieldType.password:
           final text = _controllers[field.name]!.text;
@@ -474,65 +528,130 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
             payload[field.name] = text;
           }
         case FieldType.text:
+        case FieldType.multiline:
+        case FieldType.personName:
+        case FieldType.roleName:
         case FieldType.email:
-        case FieldType.isoDate:
+        case FieldType.url:
+        case FieldType.dateTime:
           payload[field.name] = _controllers[field.name]!.text.trim();
       }
     }
-    if (_isEdit && widget.allowEstadoToggleOnEdit) {
-      payload['estado'] = _estado;
+    if (_isEdit) {
+      if (widget.allowEstadoToggleOnEdit) {
+        payload['estado'] = _estado;
+      }
+      final rowVersion = widget.existing?.values['row_version'];
+      if (rowVersion != null) {
+        payload['row_version'] = rowVersion;
+      }
     }
     return payload;
   }
 
   String? _validateField(CrudField field, String? raw) {
-    final value = raw?.trim() ?? '';
     final mustRequire = field.required &&
         !(field.requiredOnCreateOnly && _isEdit) &&
         field.type != FieldType.optionalInteger;
 
-    if (mustRequire && value.isEmpty) {
-      return '${field.label} es obligatorio';
-    }
-    if (value.isEmpty) return null;
+    return switch (field.type) {
+      FieldType.personName => AppValidators.personName(raw),
+      FieldType.roleName => AppValidators.roleName(raw),
+      FieldType.email => AppValidators.email(raw),
+      FieldType.password => AppValidators.password(raw, required: mustRequire),
+      FieldType.url => AppValidators.httpUrl(raw, required: mustRequire),
+      FieldType.dateTime => AppValidators.isoDateTime(raw),
+      FieldType.integer => AppValidators.integer(
+          raw,
+          label: field.label,
+          required: mustRequire,
+          min: field.min?.toInt() ?? 0,
+          max: field.max?.toInt() ?? 1000000,
+        ),
+      FieldType.optionalInteger => AppValidators.integer(
+          raw,
+          label: field.label,
+          required: false,
+          min: field.min?.toInt() ?? 0,
+          max: field.max?.toInt() ?? 1000000,
+        ),
+      FieldType.decimal => AppValidators.decimal(
+          raw,
+          label: field.label,
+          required: mustRequire,
+          min: field.min?.toDouble() ?? 0,
+          max: field.max?.toDouble() ?? 999999.99,
+        ),
+      FieldType.text => AppValidators.plainText(
+          raw,
+          label: field.label,
+          required: mustRequire,
+          minLength: field.minLength ?? 2,
+          maxLength: field.maxLength ?? 200,
+        ),
+      FieldType.multiline => AppValidators.plainText(
+          raw,
+          label: field.label,
+          required: mustRequire,
+          minLength: field.minLength ?? 2,
+          maxLength: field.maxLength ?? 1000,
+        ),
+      FieldType.dropdown => null,
+    };
+  }
 
-    switch (field.type) {
-      case FieldType.email:
-        if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value)) {
-          return 'Ingresa un correo electrónico válido';
-        }
-      case FieldType.password:
-        if ((raw ?? '').length < 6) {
-          return 'La contraseña debe tener al menos 6 caracteres';
-        }
-      case FieldType.integer:
-      case FieldType.optionalInteger:
-        final parsed = int.tryParse(value);
-        if (parsed == null) return 'Ingresa un número entero válido';
-        if (field.min != null && parsed < field.min!) {
-          return 'Debe ser mayor o igual a ${field.min}';
-        }
-        if (field.max != null && parsed > field.max!) {
-          return 'Debe ser menor o igual a ${field.max}';
-        }
-      case FieldType.decimal:
-        final parsed = double.tryParse(value.replaceAll(',', '.'));
-        if (parsed == null) return 'Ingresa un número decimal válido';
-        if (field.min != null && parsed < field.min!) {
-          return 'Debe ser mayor o igual a ${field.min}';
-        }
-        if (field.max != null && parsed > field.max!) {
-          return 'Debe ser menor o igual a ${field.max}';
-        }
-      case FieldType.isoDate:
-        if (DateTime.tryParse(value) == null) {
-          return 'Usa formato ISO válido (ej. 2026-12-20T20:00:00)';
-        }
-      case FieldType.text:
-      case FieldType.dropdown:
-        break;
-    }
-    return null;
+  List<TextInputFormatter> _formattersFor(CrudField field) {
+    return switch (field.type) {
+      FieldType.integer || FieldType.optionalInteger =>
+        AppInputFormatters.integerOnly,
+      FieldType.decimal => AppInputFormatters.decimal2,
+      FieldType.email || FieldType.url => AppInputFormatters.noSpacesNoEmoji,
+      FieldType.text ||
+      FieldType.multiline ||
+      FieldType.personName ||
+      FieldType.roleName ||
+      FieldType.password ||
+      FieldType.dateTime ||
+      FieldType.dropdown =>
+        [AppInputFormatters.noEmoji],
+    };
+  }
+
+  Future<void> _pickDateTime(String fieldName) async {
+    final controller = _controllers[fieldName];
+    if (controller == null) return;
+
+    final existing = DateTime.tryParse(
+      controller.text.trim().replaceFirst(' ', 'T'),
+    );
+    final now = DateTime.now();
+    final minDate = DateTime(2020);
+    final maxDate = DateTime(2100);
+    var initial = existing ?? now.add(const Duration(days: 7));
+    if (initial.isBefore(minDate)) initial = minDate;
+    if (initial.isAfter(maxDate)) initial = maxDate;
+
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: minDate,
+      lastDate: maxDate,
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: initial.hour, minute: initial.minute),
+    );
+    if (pickedTime == null || !mounted) return;
+
+    String two(int n) => n.toString().padLeft(2, '0');
+    final formatted =
+        '${pickedDate.year}-${two(pickedDate.month)}-${two(pickedDate.day)}'
+        'T${two(pickedTime.hour)}:${two(pickedTime.minute)}:00';
+    setState(() {
+      controller.text = formatted;
+    });
   }
 
   Future<void> _save() async {
@@ -549,7 +668,19 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
     setState(() => _saving = true);
     try {
       await widget.onSubmit(payload);
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) {
+        Navigator.of(context).pop(const _CrudDialogResult.saved());
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 409 && _isEdit) {
+        Navigator.of(context).pop(_CrudDialogResult.conflict(e.message));
+        return;
+      }
+      setState(() {
+        _submitError = e.toString();
+        _saving = false;
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -591,37 +722,52 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
     }
 
     final isPassword = field.type == FieldType.password;
+    final isDateTime = field.type == FieldType.dateTime;
+    final isMultiline = field.type == FieldType.multiline;
     final obscure = _obscureMap[field.name] ?? false;
 
     final keyboardType = switch (field.type) {
       FieldType.email => TextInputType.emailAddress,
+      FieldType.url => TextInputType.url,
+      FieldType.dateTime => TextInputType.datetime,
+      FieldType.multiline => TextInputType.multiline,
       FieldType.integer || FieldType.optionalInteger => TextInputType.number,
       FieldType.decimal =>
         const TextInputType.numberWithOptions(decimal: true),
       _ => TextInputType.text,
     };
 
+    Widget? suffixIcon;
+    if (isPassword) {
+      suffixIcon = IconButton(
+        tooltip: obscure ? 'Mostrar contraseña' : 'Ocultar contraseña',
+        icon: Icon(
+          obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+        ),
+        onPressed: () => setState(() => _obscureMap[field.name] = !obscure),
+      );
+    } else if (isDateTime) {
+      suffixIcon = IconButton(
+        tooltip: 'Seleccionar fecha y hora',
+        icon: const Icon(Icons.calendar_today_outlined),
+        onPressed: _saving ? null : () => _pickDateTime(field.name),
+      );
+    }
+
     return TextFormField(
       controller: _controllers[field.name],
       enabled: !_saving,
       obscureText: isPassword && obscure,
       keyboardType: keyboardType,
+      inputFormatters: _formattersFor(field),
+      minLines: isMultiline ? 2 : 1,
+      maxLines: isMultiline ? 4 : 1,
       decoration: InputDecoration(
         labelText: field.requiredOnCreateOnly && _isEdit
             ? '${field.label} (opcional)'
             : field.label,
         helperText: field.helperText,
-        suffixIcon: isPassword
-            ? IconButton(
-                icon: Icon(
-                  obscure
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                ),
-                onPressed: () =>
-                    setState(() => _obscureMap[field.name] = !obscure),
-              )
-            : null,
+        suffixIcon: suffixIcon,
       ),
       validator: (v) => _validateField(field, v),
     );
@@ -685,7 +831,10 @@ class _CrudFormDialogState extends State<_CrudFormDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          onPressed: _saving
+              ? null
+              : () =>
+                  Navigator.of(context).pop(const _CrudDialogResult.cancelled()),
           child: const Text('Cancelar'),
         ),
         LoadingButton(

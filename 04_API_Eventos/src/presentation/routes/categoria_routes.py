@@ -5,10 +5,11 @@ from src.presentation.middlewares.auth_guard import require_role
 from src.presentation.schemas.validators import (
     get_json_body,
     optional_bool,
-    optional_non_empty_str,
-    optional_str,
+    optional_categoria_descripcion,
+    optional_categoria_nombre,
+    optional_positive_int,
+    require_categoria_nombre,
     require_fields,
-    require_non_empty_str,
 )
 
 categoria_bp = Blueprint("categorias", __name__)
@@ -28,8 +29,10 @@ def list_categorias():
 def create_categoria():
     data = get_json_body(request)
     require_fields(data, ["nombre"])
-    nombre = require_non_empty_str(data.get("nombre"), "nombre")
-    descripcion = optional_str(data.get("descripcion"), "descripcion") or ""
+    nombre = require_categoria_nombre(data.get("nombre"))
+    descripcion = optional_categoria_descripcion(data.get("descripcion"))
+    if descripcion is None:
+        descripcion = ""
     return jsonify(_c().crear_categoria.execute(nombre, descripcion).to_dict()), 201
 
 
@@ -37,12 +40,17 @@ def create_categoria():
 @require_role("ADMIN")
 def update_categoria(categoria_id):
     data = get_json_body(request)
-    nombre = optional_non_empty_str(data.get("nombre"), "nombre")
-    descripcion = optional_str(data.get("descripcion"), "descripcion")
+    nombre = optional_categoria_nombre(data.get("nombre"))
+    descripcion = optional_categoria_descripcion(data.get("descripcion"))
     estado = optional_bool(data.get("estado"), "estado")
+    row_version = optional_positive_int(data.get("row_version"), "row_version")
     return jsonify(
         _c().actualizar_categoria.execute(
-            categoria_id, nombre=nombre, descripcion=descripcion, estado=estado
+            categoria_id,
+            nombre=nombre,
+            descripcion=descripcion,
+            estado=estado,
+            row_version=row_version,
         ).to_dict()
     ), 200
 
