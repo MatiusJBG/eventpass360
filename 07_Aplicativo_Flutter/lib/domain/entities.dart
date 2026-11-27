@@ -234,3 +234,29 @@ class Estadisticas {
     required this.porEstado,
   });
 }
+
+class Entrada {
+  final int id;
+  final int compraId;
+  final int detalleCompraId;
+  final int eventoId;
+  final String codigo;
+  final String estado;
+  final String? fechaValidacion;
+  final String evento;
+  final String tipo;
+  final int rowVersion;
+
+  const Entrada({
+    required this.id,
+    required this.compraId,
+    required this.detalleCompraId,
+    required this.eventoId,
+    required this.codigo,
+    required this.estado,
+    this.fechaValidacion,
+    required this.evento,
+    required this.tipo,
+    this.rowVersion = 1,
+  });
+}

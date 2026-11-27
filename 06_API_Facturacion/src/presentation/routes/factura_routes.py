@@ -26,6 +26,7 @@ def emitir():
         cliente=payload["cliente"],
         items=payload["items"],
         totales=payload["totales"],
+        codigos=payload.get("codigos"),
     )
     return jsonify(factura.to_dict()), 201
 

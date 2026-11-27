@@ -158,11 +158,28 @@ def parse_emitir_factura_payload(raw) -> dict:
         if key in totales:
             parse_non_negative_decimal(totales[key], f"totales.{key}")
 
+    codigos = data.get("codigos")
+    if codigos is not None:
+        if not isinstance(codigos, list):
+            raise ValidationError("codigos debe ser una lista")
+        for idx, c in enumerate(codigos):
+            if not isinstance(c, dict):
+                raise ValidationError(f"codigos[{idx}] debe ser un objeto")
+            if "codigo" in c and c["codigo"] is not None:
+                if not isinstance(c["codigo"], str):
+                    raise ValidationError(f"codigos[{idx}].codigo debe ser una cadena")
+                assert_no_emojis(c["codigo"], f"codigos[{idx}].codigo")
+            if "evento" in c and c["evento"] is not None:
+                if not isinstance(c["evento"], str):
+                    raise ValidationError(f"codigos[{idx}].evento debe ser una cadena")
+                assert_no_emojis(c["evento"], f"codigos[{idx}].evento")
+
     return {
         "compra_id": compra_id,
         "cliente": cliente,
         "items": items,
         "totales": totales,
+        "codigos": codigos,
     }
 
 

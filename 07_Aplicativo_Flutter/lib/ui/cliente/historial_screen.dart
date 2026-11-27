@@ -21,6 +21,7 @@ class HistorialScreen extends StatefulWidget {
 class HistorialScreenState extends State<HistorialScreen> {
   UiState<List<Compra>> _state = const UiLoading();
   Map<int, Factura> _facturasPorCompra = const {};
+  Map<int, List<Entrada>> _entradasPorCompra = const {};
   int? _anulandoId;
 
   @override
@@ -37,12 +38,18 @@ class HistorialScreenState extends State<HistorialScreen> {
       final results = await Future.wait<dynamic>([
         deps.compras.listarCompras(),
         deps.facturacion.listarFacturas(),
+        deps.entradas.listarEntradas(),
       ]);
       if (!mounted) return;
       final compras = results[0] as List<Compra>;
       final facturas = results[1] as List<Factura>;
+      final entradas = results[2] as List<Entrada>;
       setState(() {
         _facturasPorCompra = {for (final f in facturas) f.compraId: f};
+        _entradasPorCompra = <int, List<Entrada>>{};
+        for (final e in entradas) {
+          (_entradasPorCompra[e.compraId] ??= []).add(e);
+        }
         _state = UiSuccess(compras);
       });
     } catch (e) {
@@ -176,6 +183,26 @@ class HistorialScreenState extends State<HistorialScreen> {
                             ],
                           ),
                         ),
+                      if ((_entradasPorCompra[compra.id] ?? const []).isNotEmpty) ...[
+                        const Divider(),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            'Entradas',
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: brand),
+                          ),
+                        ),
+                        for (final ent in _entradasPorCompra[compra.id]!)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              children: [
+                                Expanded(child: Text('${ent.codigo} · ${ent.evento}')),
+                                StatusBadge(ent.estado),
+                              ],
+                            ),
+                          ),
+                      ],
                       const Divider(),
                       Wrap(
                         spacing: 16,

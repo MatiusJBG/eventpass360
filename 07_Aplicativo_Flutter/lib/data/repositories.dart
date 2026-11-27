@@ -336,3 +336,18 @@ class FacturacionRepository implements FacturacionRepositoryPort {
   String urlPdf(int facturaId) =>
       '${AppConfig.apiFacturacion}/api/factura/$facturaId/pdf';
 }
+
+class EntradasRepository implements EntradasRepositoryPort {
+  final ApiClient client;
+  const EntradasRepository(this.client);
+
+  @override
+  Future<List<Entrada>> listarEntradas({int? compraId, int? usuarioId}) async {
+    final params = <String>[];
+    if (compraId != null) params.add('compra_id=$compraId');
+    if (usuarioId != null) params.add('usuario_id=$usuarioId');
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    final raw = await client.get('${AppConfig.apiEntradas}/api/entradas$query');
+    return _asMapList(raw).map(EntradaModel.fromJson).toList();
+  }
+}

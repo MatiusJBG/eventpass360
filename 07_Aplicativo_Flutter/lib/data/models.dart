@@ -440,3 +440,31 @@ class EstadisticasModel extends Estadisticas {
         'por_estado': porEstado,
       };
 }
+
+class EntradaModel extends Entrada {
+  const EntradaModel({
+    required super.id,
+    required super.compraId,
+    required super.detalleCompraId,
+    required super.eventoId,
+    required super.codigo,
+    required super.estado,
+    super.fechaValidacion,
+    required super.evento,
+    required super.tipo,
+    super.rowVersion = 1,
+  });
+
+  factory EntradaModel.fromJson(Map<String, dynamic> json) => EntradaModel(
+        id: _asInt(json['id']),
+        compraId: _asInt(json['compra_id']),
+        detalleCompraId: _asInt(json['detalle_compra_id']),
+        eventoId: _asInt(json['evento_id']),
+        codigo: json['codigo']?.toString() ?? '',
+        estado: json['estado']?.toString() ?? '',
+        fechaValidacion: json['fecha_validacion']?.toString(),
+        evento: json['evento']?.toString() ?? '',
+        tipo: json['tipo']?.toString() ?? '',
+        rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
+      );
+}

@@ -9,7 +9,7 @@ MONEY = Decimal("0.01")
 
 
 class GenerarFacturaXmlService(XmlGenerator):
-    def generar(self, numero, fecha, cliente, items, totales) -> str:
+    def generar(self, numero, fecha, cliente, items, totales, codigos=None) -> str:
         factura = ET.Element("Factura")
 
         cabecera = ET.SubElement(factura, "Cabecera")
@@ -29,6 +29,13 @@ class GenerarFacturaXmlService(XmlGenerator):
             ET.SubElement(item, "Cantidad").text = str(it.get("cantidad", ""))
             ET.SubElement(item, "PrecioUnitario").text = self._money(it.get("precio_unitario", 0))
             ET.SubElement(item, "Subtotal").text = self._money(it.get("subtotal", 0))
+
+        if codigos:
+            entradas_el = ET.SubElement(factura, "Entradas")
+            for c in codigos:
+                entrada_el = ET.SubElement(entradas_el, "Entrada")
+                ET.SubElement(entrada_el, "Codigo").text = str(c.get("codigo", ""))
+                ET.SubElement(entrada_el, "Evento").text = str(c.get("evento", ""))
 
         totales_el = ET.SubElement(factura, "Totales")
         ET.SubElement(totales_el, "Subtotal").text = self._money(totales.get("subtotal", 0))

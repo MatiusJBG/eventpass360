@@ -27,6 +27,7 @@ from src.domain.exceptions import (
 )
 from src.domain.repositories import (
     CompraRepository,
+    EntradasGateway,
     EventosGateway,
     FacturacionGateway,
     PromocionesGateway,
@@ -179,7 +180,7 @@ class FakeFacturacionGateway(FacturacionGateway):
         self.fail_emitir = False
         self.fail_anular = False
 
-    def emitir(self, compra_id, cliente, items, totales, auth_header=""):
+    def emitir(self, compra_id, cliente, items, totales, auth_header="", codigos=None):
         self.emit_calls.append((compra_id, auth_header))
         if self.fail_emitir:
             raise ServiceUnavailableError("Facturación caída")
@@ -199,15 +200,35 @@ class FakeFacturacionGateway(FacturacionGateway):
             self.facturas[compra_id]["estado"] = "ANULADA"
 
 
+class FakeEntradasGateway(EntradasGateway):
+    def __init__(self):
+        self.generar_calls = []
+        self.anular_calls = []
+        self.fail_generar = False
+
+    def generar(self, compra_id, auth_header=""):
+        self.generar_calls.append((compra_id, auth_header))
+        if self.fail_generar:
+            raise ServiceUnavailableError("Entradas caída")
+        return [
+            {"codigo": "EVT-%06d-%d" % (compra_id, i + 1), "evento": "Rock Fest", "evento_nombre": "Rock Fest"}
+            for i in range(3)
+        ]
+
+    def anular_por_compra(self, compra_id, auth_header=""):
+        self.anular_calls.append((compra_id, auth_header))
+
+
 class ComprasSagaTestCase(unittest.TestCase):
     def setUp(self):
         self.repo = InMemoryCompraRepo()
         self.eventos_gw = FakeEventosGateway()
         self.promociones_gw = FakePromocionesGateway()
         self.facturacion_gw = FakeFacturacionGateway()
+        self.entradas_gw = FakeEntradasGateway()
 
-        self.crear_uc = CrearCompraUseCase(self.repo, self.eventos_gw, self.promociones_gw, self.facturacion_gw)
-        self.anular_uc = AnularCompraUseCase(self.repo, self.eventos_gw, self.facturacion_gw)
+        self.crear_uc = CrearCompraUseCase(self.repo, self.eventos_gw, self.promociones_gw, self.facturacion_gw, self.entradas_gw)
+        self.anular_uc = AnularCompraUseCase(self.repo, self.eventos_gw, self.facturacion_gw, self.entradas_gw)
 
         self.app = create_app()
         container = self.app.extensions["container"]
@@ -215,6 +236,7 @@ class ComprasSagaTestCase(unittest.TestCase):
         container.eventos_gw = self.eventos_gw
         container.promociones_gw = self.promociones_gw
         container.facturacion_gw = self.facturacion_gw
+        container.entradas_gw = self.entradas_gw
         container.previsualizar = PrevisualizarCompraUseCase(self.eventos_gw, self.promociones_gw)
         container.crear_compra = self.crear_uc
         container.listar_compras = ListarComprasUseCase(self.repo)

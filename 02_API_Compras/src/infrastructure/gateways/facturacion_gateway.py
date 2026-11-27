@@ -16,11 +16,11 @@ class FacturacionGateway(FacturacionGatewayPort):
     def _headers(auth_header: str) -> Optional[dict]:
         return {"Authorization": auth_header} if auth_header else None
 
-    def emitir(self, compra_id, cliente, items, totales, auth_header: str = "") -> dict:
+    def emitir(self, compra_id, cliente, items, totales, auth_header: str = "", codigos=None) -> dict:
         try:
             r = requests.post(
                 self.base_url + "/api/factura",
-                json={"compra_id": compra_id, "cliente": cliente, "items": items, "totales": totales},
+                json={"compra_id": compra_id, "cliente": cliente, "items": items, "totales": totales, "codigos": codigos},
                 headers=self._headers(auth_header),
                 timeout=self.timeout,
             )

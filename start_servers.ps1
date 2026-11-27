@@ -6,7 +6,8 @@ $services = @(
   @('03_API_Usuarios',   5001),
   @('04_API_Eventos',    5002),
   @('05_API_Promociones',5003),
-  @('06_API_Facturacion',5004)
+  @('06_API_Facturacion',5004),
+  @('10_API_Entradas',   5005)
 )
 foreach ($s in $services) {
   $dir = Join-Path $root $s[0]

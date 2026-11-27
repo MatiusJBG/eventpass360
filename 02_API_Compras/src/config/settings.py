@@ -13,6 +13,7 @@ class Settings:
     url_eventos: str
     url_promociones: str
     url_facturacion: str
+    url_entradas: str
     http_timeout: int
 
     @classmethod
@@ -25,5 +26,6 @@ class Settings:
             url_eventos=os.getenv("URL_EVENTOS", "http://localhost:5002"),
             url_promociones=os.getenv("URL_PROMOCIONES", "http://localhost:5003"),
             url_facturacion=os.getenv("URL_FACTURACION", "http://localhost:5004"),
+            url_entradas=os.getenv("URL_ENTRADAS", "http://localhost:5005"),
             http_timeout=int(os.getenv("HTTP_TIMEOUT", "10")),
         )

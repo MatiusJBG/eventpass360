@@ -7,6 +7,7 @@ from src.application.use_cases.previsualizar_use_cases import PrevisualizarCompr
 from src.config.settings import Settings
 from src.infrastructure.db.postgres_repository import PostgresCompraRepository
 from src.infrastructure.gateways.eventos_gateway import EventosGateway
+from src.infrastructure.gateways.entradas_gateway import EntradasGateway
 from src.infrastructure.gateways.facturacion_gateway import FacturacionGateway
 from src.infrastructure.gateways.promociones_gateway import PromocionesGateway
 
@@ -18,13 +19,14 @@ class Container:
         self.eventos_gw = EventosGateway(settings.url_eventos, settings.http_timeout)
         self.promociones_gw = PromocionesGateway(settings.url_promociones, settings.http_timeout)
         self.facturacion_gw = FacturacionGateway(settings.url_facturacion, settings.http_timeout)
+        self.entradas_gw = EntradasGateway(settings.url_entradas, settings.http_timeout)
 
         self.previsualizar = PrevisualizarCompraUseCase(self.eventos_gw, self.promociones_gw)
-        self.crear_compra = CrearCompraUseCase(self.repo, self.eventos_gw, self.promociones_gw, self.facturacion_gw)
+        self.crear_compra = CrearCompraUseCase(self.repo, self.eventos_gw, self.promociones_gw, self.facturacion_gw, self.entradas_gw)
         self.listar_compras = ListarComprasUseCase(self.repo)
         self.obtener_compra = ObtenerCompraUseCase(self.repo)
         self.estadisticas = EstadisticasComprasUseCase(self.repo)
-        self.anular_compra = AnularCompraUseCase(self.repo, self.eventos_gw, self.facturacion_gw)
+        self.anular_compra = AnularCompraUseCase(self.repo, self.eventos_gw, self.facturacion_gw, self.entradas_gw)
 
 
 def build_container(settings: Settings) -> Container:

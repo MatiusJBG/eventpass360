@@ -78,3 +78,7 @@ abstract interface class ComprasRepositoryPort {
   Future<Estadisticas> estadisticas();
   Future<Compra> anularCompra(int id, {int? rowVersion});
 }
+
+abstract interface class EntradasRepositoryPort {
+  Future<List<Entrada>> listarEntradas({int? compraId, int? usuarioId});
+}

@@ -204,6 +204,11 @@ class _FakeFacturacionRepo implements FacturacionRepositoryPort {
   String urlPdf(int facturaId) => '';
 }
 
+class _FakeEntradasRepo implements EntradasRepositoryPort {
+  @override
+  Future<List<Entrada>> listarEntradas({int? compraId, int? usuarioId}) async => const [];
+}
+
 AppDependencies _buildFakeDeps(
   Session session, {
   _FakeUsuariosRepo? usuarios,
@@ -220,6 +225,7 @@ AppDependencies _buildFakeDeps(
     ]),
     facturacion: _FakeFacturacionRepo(),
     compras: _FakeComprasRepo(),
+    entradas: _FakeEntradasRepo(),
   );
 }
 

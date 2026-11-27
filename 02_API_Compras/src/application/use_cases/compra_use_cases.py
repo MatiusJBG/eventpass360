@@ -12,6 +12,7 @@ from src.domain.exceptions import (
 )
 from src.domain.repositories import (
     CompraRepository,
+    EntradasGateway,
     EventosGateway,
     FacturacionGateway,
     PromocionesGateway,
@@ -32,11 +33,13 @@ class CrearCompraUseCase:
         eventos_gw: EventosGateway,
         promociones_gw: PromocionesGateway,
         facturacion_gw: FacturacionGateway,
+        entradas_gw: EntradasGateway,
     ):
         self.repo = repo
         self.eventos_gw = eventos_gw
         self.promociones_gw = promociones_gw
         self.facturacion_gw = facturacion_gw
+        self.entradas_gw = entradas_gw
 
     def _build_replay_response(self, existing, usuario: dict, auth_header: str) -> dict:
         if existing.usuario_id != usuario["sub"]:
@@ -103,6 +106,22 @@ class CrearCompraUseCase:
                 return self._build_replay_response(existing, usuario, auth_header), False
             raise
 
+        # 5.5. Generar entradas electrónicas (API Entradas).
+        try:
+            entradas = self.entradas_gw.generar(compra.id, auth_header=auth_header)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Falló la generación de entradas; compensando compra %s: %s", compra.id, exc)
+            try:
+                self.eventos_gw.restaurar(normalized, auth_header=auth_header)
+            except Exception as restore_exc:  # noqa: BLE001
+                logger.error("No se pudo restaurar stock de compra %s: %s", compra.id, restore_exc)
+            self.repo.update_estado(compra.id, "FALLIDA")
+            raise ServiceUnavailableError("No se pudieron generar las entradas; compra compensada") from exc
+        codigos = [
+            {"codigo": e.get("codigo", ""), "evento": e.get("evento") or e.get("evento_nombre", "")}
+            for e in entradas
+        ]
+
         # 6. Emitir factura en API Facturación.
         factura_items = [
             {"descripcion": f"{it['evento_nombre']} - {it['tipo']}", "cantidad": it["cantidad_solicitada"],
@@ -114,7 +133,7 @@ class CrearCompraUseCase:
 
         try:
             factura = self.facturacion_gw.emitir(
-                compra.id, cliente, factura_items, totales, auth_header=auth_header
+                compra.id, cliente, factura_items, totales, auth_header=auth_header, codigos=codigos
             )
         except Exception as exc:  # noqa: BLE001
             # 7. COMPENSACIÓN SAGA: restaurar stock y marcar FALLIDA (nunca confirmada incompleta).
@@ -166,10 +185,12 @@ class AnularCompraUseCase:
         repo: CompraRepository,
         eventos_gw: EventosGateway,
         facturacion_gw: FacturacionGateway,
+        entradas_gw: EntradasGateway,
     ):
         self.repo = repo
         self.eventos_gw = eventos_gw
         self.facturacion_gw = facturacion_gw
+        self.entradas_gw = entradas_gw
 
     def execute(self, compra_id: int, auth_header: str = "", expected_version: int | None = None):
         if expected_version is not None:
@@ -216,5 +237,11 @@ class AnularCompraUseCase:
             except Exception as comp_exc:  # noqa: BLE001
                 logger.error("Error compensando anulación fallida de compra %s: %s", compra_id, comp_exc)
             raise ServiceUnavailableError("No se pudo anular la factura asociada") from exc
+
+        # Anular entradas electrónicas asociadas (best-effort).
+        try:
+            self.entradas_gw.anular_por_compra(compra_id, auth_header=auth_header)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("No se pudo anular entradas de compra %s: %s", compra_id, exc)
 
         return self.repo.find_by_id(compra_id)

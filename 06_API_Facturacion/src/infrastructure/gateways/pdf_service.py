@@ -17,7 +17,7 @@ MONEY = Decimal("0.01")
 
 
 class GenerarFacturaPdfService(PdfGenerator):
-    def generar(self, numero, fecha, cliente, items, totales) -> bytes:
+    def generar(self, numero, fecha, cliente, items, totales, codigos=None) -> bytes:
         buf = BytesIO()
         doc = SimpleDocTemplate(
             buf, pagesize=A4, topMargin=22 * mm, bottomMargin=20 * mm,
@@ -62,6 +62,25 @@ class GenerarFacturaPdfService(PdfGenerator):
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f1fb")]),
         ]))
         story.append(table)
+
+        if codigos:
+            story.append(Spacer(1, 6 * mm))
+            story.append(Paragraph("<b>Entradas</b>", styles["Normal"]))
+            story.append(Spacer(1, 2 * mm))
+            cdata = [["Código", "Evento"]]
+            for c in codigos:
+                cdata.append([escape(str(c.get("codigo", ""))), escape(str(c.get("evento", "")))])
+            ctable = Table(cdata, colWidths=[78 * mm, 88 * mm])
+            ctable.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.append(ctable)
+
         story.append(Spacer(1, 8 * mm))
 
         tdata = [

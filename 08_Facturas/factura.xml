@@ -2,7 +2,7 @@
 <Factura>
   <Cabecera>
     <Numero>FAC-000001</Numero>
-    <Fecha>2026-11-27T18:09:33.489090+00:00</Fecha>
+    <Fecha>2026-11-27T19:52:06.229849+00:00</Fecha>
     <Estado>EMITIDA</Estado>
   </Cabecera>
   <Cliente>
@@ -18,6 +18,20 @@
       <Subtotal>75.00</Subtotal>
     </Item>
   </Detalle>
+  <Entradas>
+    <Entrada>
+      <Codigo>EVT-000001</Codigo>
+      <Evento>Rock Fest</Evento>
+    </Entrada>
+    <Entrada>
+      <Codigo>EVT-000002</Codigo>
+      <Evento>Rock Fest</Evento>
+    </Entrada>
+    <Entrada>
+      <Codigo>EVT-000003</Codigo>
+      <Evento>Rock Fest</Evento>
+    </Entrada>
+  </Entradas>
   <Totales>
     <Subtotal>75.00</Subtotal>
     <Descuento>3.75</Descuento>

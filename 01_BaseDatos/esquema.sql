@@ -3,6 +3,8 @@
 -- 9 tablas + secuencia de facturación. 100% re-ejecutable.
 -- =============================================================
 
+DROP TABLE IF EXISTS entradas CASCADE;
+DROP SEQUENCE IF EXISTS entrada_codigo_seq CASCADE;
 DROP TABLE IF EXISTS facturas CASCADE;
 DROP TABLE IF EXISTS detalle_compra CASCADE;
 DROP TABLE IF EXISTS compras CASCADE;
@@ -125,3 +127,22 @@ CREATE TABLE facturas (
 
 -- Secuencia para numeración inmutable FAC-000001
 CREATE SEQUENCE factura_numero_seq START 1;
+
+-- 10. entradas (Fase 2 · entradas electrónicas individuales)
+CREATE TABLE entradas (
+    id                SERIAL PRIMARY KEY,
+    compra_id         INT NOT NULL REFERENCES compras(id) ON DELETE RESTRICT,
+    detalle_compra_id INT NOT NULL REFERENCES detalle_compra(id) ON DELETE RESTRICT,
+    evento_id         INT NOT NULL REFERENCES eventos(id) ON DELETE RESTRICT,
+    codigo            VARCHAR(50) UNIQUE NOT NULL,
+    estado            VARCHAR(20) NOT NULL DEFAULT 'DISPONIBLE'
+                      CHECK (estado IN ('DISPONIBLE','UTILIZADA','ANULADA')),
+    fecha_validacion  TIMESTAMPTZ NULL,
+    row_version       INT NOT NULL DEFAULT 1 CHECK (row_version >= 1)
+);
+CREATE INDEX idx_entradas_compra_id ON entradas(compra_id);
+CREATE INDEX idx_entradas_detalle_compra_id ON entradas(detalle_compra_id);
+CREATE INDEX idx_entradas_evento_id ON entradas(evento_id);
+
+-- Secuencia para códigos únicos EVT-000001
+CREATE SEQUENCE entrada_codigo_seq START 1;

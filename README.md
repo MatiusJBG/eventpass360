@@ -1,4 +1,4 @@
-# EventPass 360 — Fase 1 · Arquitectura Orientada a Servicios (SOA)
+# EventPass 360 — Fases 1 y 2 · Arquitectura Orientada a Servicios (SOA)
 
 Sistema distribuido para administrar y comercializar entradas a conciertos, encuentros deportivos y conferencias, con facturación electrónica académica en XML y PDF por cada compra confirmada.
 
@@ -8,7 +8,7 @@ Entregable: **Morales_Matias_EventPass360**
 
 ## 1. Arquitectura
 
-SOA: una bóveda central (Supabase PostgreSQL, 9 tablas) y 5 ventanillas independientes (APIs Flask) que se comunican solo por HTTP/JSON, más un mostrador digital (Flutter) que jamás toca la base de datos directamente.
+SOA: una bóveda central (Supabase PostgreSQL, 10 tablas) y 6 ventanillas independientes (APIs Flask) que se comunican solo por HTTP/JSON, más un mostrador digital (Flutter) que jamás toca la base de datos directamente.
 
 | Componente | Puerto | Responsabilidad |
 | :--- | :---: | :--- |
@@ -17,6 +17,7 @@ SOA: una bóveda central (Supabase PostgreSQL, 9 tablas) y 5 ventanillas indepen
 | 04_API_Eventos | 5002 | Categorías, eventos, tipos de entrada y stock atómico |
 | 05_API_Promociones | 5003 | Promociones por tramos y cálculo dinámico (descuento + IVA 15%) |
 | 06_API_Facturacion | 5004 | Emisión idempotente de factura XML + PDF (ReportLab) |
+| 10_API_Entradas | 5005 | Entradas electrónicas individuales (generar y validar códigos) |
 | 07_Aplicativo_Flutter | 8080 | Cliente y administrador (Web/Windows/Android) |
 
 Cada API implementa Clean Architecture + SOLID (domain / application / infrastructure / presentation) y es 100% independiente: ninguna API importa código de otra (interoperabilidad solo HTTP REST). Flutter consume las 5 APIs vía http, sin conexión directa a Supabase.
@@ -34,7 +35,8 @@ Cada API implementa Clean Architecture + SOLID (domain / application / infrastru
     ├── 06_API_Facturacion/    :5004 (XML + PDF)
     ├── 07_Aplicativo_Flutter/ cliente + admin
     ├── 08_Facturas/           factura.xml + factura.pdf de muestra
-    └── 09_Evidencias/         capturas de pantalla
+    ├── 09_Evidencias/         capturas de pantalla
+    └── 10_API_Entradas/       :5005 (entradas electrónicas)
 
 ---
 
@@ -134,6 +136,7 @@ Cálculo con Decimal y redondeo ROUND_HALF_UP.
 - Eventos: /api/categorias · /api/eventos · /api/tipos-entrada · POST /api/stock/cotizar|descontar|restaurar
 - Promociones: /api/promociones · POST /api/promociones/calcular
 - Facturación: POST /api/factura · GET /api/factura · GET /api/factura/<id>/xml|pdf · PATCH /api/factura/<id>/anular
+- Entradas (Fase 2): POST /api/entradas/generar · POST /api/entradas/validar · GET /api/entradas · PATCH /api/entradas/compra/<id>/anular
 
 ---
 

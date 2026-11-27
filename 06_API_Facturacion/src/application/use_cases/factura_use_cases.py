@@ -118,7 +118,7 @@ class EmitirFacturaUseCase:
         self.xml_service = xml_service
         self.pdf_service = pdf_service
 
-    def execute(self, compra_id, cliente, items, totales):
+    def execute(self, compra_id, cliente, items, totales, codigos=None):
         cid = _parse_positive_int(compra_id, "compra_id")
         _validate_factura_inputs(cliente, items, totales)
         # Idempotencia: si ya existe una factura para esta compra, se devuelve sin regenerar número.
@@ -127,8 +127,8 @@ class EmitirFacturaUseCase:
             return existing
         numero = self.repo.next_numero()
         fecha = datetime.now(timezone.utc)
-        xml_str = self.xml_service.generar(numero, fecha, cliente, items, totales)
-        pdf_bytes = self.pdf_service.generar(numero, fecha, cliente, items, totales)
+        xml_str = self.xml_service.generar(numero, fecha, cliente, items, totales, codigos)
+        pdf_bytes = self.pdf_service.generar(numero, fecha, cliente, items, totales, codigos)
         pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
         try:
             return self.repo.create(cid, numero, fecha, xml_str, pdf_b64)

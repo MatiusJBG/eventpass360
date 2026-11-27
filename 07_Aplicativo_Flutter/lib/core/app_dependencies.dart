@@ -3,7 +3,7 @@ import '../domain/repositories.dart';
 import 'api_client.dart';
 import 'session.dart';
 
-/// Explicit DI container wiring ApiClient and all 5 domain repository ports.
+/// Explicit DI container wiring ApiClient and all 6 domain repository ports.
 class AppDependencies {
   final ApiClient apiClient;
   final UsuariosRepositoryPort usuarios;
@@ -11,6 +11,7 @@ class AppDependencies {
   final PromocionesRepositoryPort promociones;
   final FacturacionRepositoryPort facturacion;
   final ComprasRepositoryPort compras;
+  final EntradasRepositoryPort entradas;
 
   AppDependencies._({
     required this.apiClient,
@@ -19,6 +20,7 @@ class AppDependencies {
     required this.promociones,
     required this.facturacion,
     required this.compras,
+    required this.entradas,
   });
 
   factory AppDependencies.fromSession(Session session) {
@@ -30,6 +32,7 @@ class AppDependencies {
       promociones: PromocionesRepository(client),
       facturacion: FacturacionRepository(client),
       compras: ComprasRepository(client),
+      entradas: EntradasRepository(client),
     );
   }
 
@@ -40,6 +43,7 @@ class AppDependencies {
     required PromocionesRepositoryPort promociones,
     required FacturacionRepositoryPort facturacion,
     required ComprasRepositoryPort compras,
+    required EntradasRepositoryPort entradas,
   }) {
     return AppDependencies._(
       apiClient: apiClient,
@@ -48,6 +52,7 @@ class AppDependencies {
       promociones: promociones,
       facturacion: facturacion,
       compras: compras,
+      entradas: entradas,
     );
   }
 }
